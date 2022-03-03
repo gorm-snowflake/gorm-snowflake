@@ -125,7 +125,21 @@ func (dialector Dialector) BindVarTo(writer clause.Writer, stmt *gorm.Statement,
 
 //no quotes, quotes cause everything needing quotes
 func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
-	writer.WriteString(strings.ToLower(str))
+	// writer.WriteString(strings.ToLower(str))
+
+	writer.WriteByte('"')
+	if strings.Contains(str, ".") {
+		for idx, str := range strings.Split(str, ".") {
+			if idx > 0 {
+				writer.WriteString(`."`)
+			}
+			writer.WriteString(str)
+			writer.WriteByte('"')
+		}
+	} else {
+		writer.WriteString(str)
+		writer.WriteByte('"')
+	}
 }
 
 func (dialector Dialector) Explain(sql string, vars ...interface{}) string {
@@ -196,7 +210,7 @@ func NewNamingStrategy() *NamingStrategy {
 
 // ColumnName snowflake edition
 func (sns NamingStrategy) ColumnName(table, column string) string {
-	return strings.ToUpper(sns.defaultNS.ColumnName(table, column))
+	return sns.defaultNS.ColumnName(table, column)
 }
 
 // TableName snowflake edition
