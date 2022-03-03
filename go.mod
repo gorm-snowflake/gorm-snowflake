@@ -1,4 +1,4 @@
-module github.factset.com/FactSet/gorm-snowflake
+module github.com/EfChouTR/gorm-snowflake
 
 go 1.15
 
