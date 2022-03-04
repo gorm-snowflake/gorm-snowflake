@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -123,22 +124,34 @@ func (dialector Dialector) BindVarTo(writer clause.Writer, stmt *gorm.Statement,
 	writer.WriteByte('?')
 }
 
-//no quotes, quotes cause everything needing quotes
 func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
-	// writer.WriteString(strings.ToLower(str))
+	re := regexp.MustCompile(`(\S+)\((.+?)\)`)
+
+	quoteString := str
+	isFunction := re.MatchString(str)
+	if isFunction {
+		matches := re.FindStringSubmatch(str)
+		writer.WriteString(matches[1])
+		writer.WriteByte('(')
+		quoteString = matches[2]
+	}
 
 	writer.WriteByte('"')
-	if strings.Contains(str, ".") {
-		for idx, str := range strings.Split(str, ".") {
+	if strings.Contains(quoteString, ".") {
+		for idx, splitStr := range strings.Split(quoteString, ".") {
 			if idx > 0 {
 				writer.WriteString(`."`)
 			}
-			writer.WriteString(str)
+			writer.WriteString(splitStr)
 			writer.WriteByte('"')
 		}
 	} else {
-		writer.WriteString(str)
+		writer.WriteString(quoteString)
 		writer.WriteByte('"')
+	}
+
+	if isFunction {
+		writer.WriteByte(')')
 	}
 }
 
