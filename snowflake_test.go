@@ -28,9 +28,9 @@ func TestQuoteTo(t *testing.T) {
 
 	dialector := New(Config{})
 
-	dialector.QuoteTo(c, "TEST_FUNCTION(test)")
+	dialector.QuoteTo(c, "TEST_FUNCTION1(test)")
 
-	const expected = `TEST_FUNCTION("test")`
+	const expected = `TEST_FUNCTION1("test")`
 	if out != expected {
 		t.Errorf("Expected %s got %s", expected, out)
 	}
