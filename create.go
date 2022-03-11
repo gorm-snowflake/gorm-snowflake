@@ -184,7 +184,7 @@ func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values
 		if idx > 0 {
 			db.Statement.WriteByte(',')
 		}
-		db.Statement.WriteQuoted(column.Name)
+		db.Statement.WriteString(column.Name)
 	}
 	db.Statement.WriteString(") ON ")
 

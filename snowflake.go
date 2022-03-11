@@ -126,9 +126,16 @@ func (dialector Dialector) BindVarTo(writer clause.Writer, stmt *gorm.Statement,
 
 func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 	re := regexp.MustCompile(`([a-zA-Z0-9|_]+)\((.+?)\)`)
+	exclRegExp := regexp.MustCompile(`excluded\.[a-zA-Z0-9|_]+`)
 
 	quoteString := str
 	isFunction := re.MatchString(str)
+
+	if isExcluded := exclRegExp.MatchString(str); isExcluded {
+		writer.WriteString(str)
+		return
+	}
+
 	if isFunction {
 		matches := re.FindStringSubmatch(str)
 		writer.WriteString(matches[1])

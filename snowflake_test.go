@@ -22,7 +22,7 @@ func writeOut(s string) {
 	out += s
 }
 
-func TestQuoteTo(t *testing.T) {
+func TestQuoteToFunction(t *testing.T) {
 	t.Cleanup(teardown)
 	c := clauseBuilder{}
 
@@ -31,6 +31,21 @@ func TestQuoteTo(t *testing.T) {
 	dialector.QuoteTo(c, "TEST_FUNCTION1(test)")
 
 	const expected = `TEST_FUNCTION1("test")`
+	if out != expected {
+		t.Errorf("Expected %s got %s", expected, out)
+	}
+}
+
+func TestQuoteToExcluded(t *testing.T) {
+	t.Cleanup(teardown)
+	c := clauseBuilder{}
+
+	dialector := New(Config{})
+
+	const expected = "excluded.test"
+
+	dialector.QuoteTo(c, expected)
+
 	if out != expected {
 		t.Errorf("Expected %s got %s", expected, out)
 	}
