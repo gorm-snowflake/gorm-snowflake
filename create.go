@@ -1,7 +1,9 @@
 package snowflake
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
@@ -188,14 +190,12 @@ func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values
 	}
 	db.Statement.WriteString(") ON ")
 
-	var where clause.Where
+	var where []string
 	for _, field := range db.Statement.Schema.PrimaryFields {
-		where.Exprs = append(where.Exprs, clause.Eq{
-			Column: clause.Column{Table: db.Statement.Table, Name: field.DBName},
-			Value:  clause.Column{Table: "excluded", Name: field.DBName},
-		})
+		where = append(where, fmt.Sprintf(`"%s"."%s" = excluded.%s`, db.Statement.Table, field.DBName, field.DBName))
 	}
-	where.Build(db.Statement)
+
+	db.Statement.WriteString(strings.Join(where, " AND "))
 
 	if len(onConflict.DoUpdates) > 0 {
 		db.Statement.WriteString(" WHEN MATCHED THEN UPDATE SET ")
@@ -224,10 +224,7 @@ func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values
 				db.Statement.WriteByte(',')
 			}
 			written = true
-			db.Statement.WriteQuoted(clause.Column{
-				Table: "excluded",
-				Name:  column.Name,
-			})
+			db.Statement.WriteString(fmt.Sprintf("excluded.%s", column.Name))
 		}
 	}
 
