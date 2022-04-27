@@ -85,6 +85,8 @@ func Create(db *gorm.DB) {
 	if !db.DryRun && db.Error == nil {
 		db.RowsAffected = 0
 
+		db.Logger.Info(db.Statement.Context, "This is the result of insert", db.Statement.SQL.String())
+
 		// exec the merge/insert first
 		if result, err := db.Statement.ConnPool.ExecContext(db.Statement.Context, db.Statement.SQL.String(), db.Statement.Vars...); err == nil {
 			db.RowsAffected, _ = result.RowsAffected()
