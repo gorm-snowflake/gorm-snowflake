@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	github.com/snowflakedb/gosnowflake v1.6.0
-	gorm.io/gorm v1.23.3
+	gorm.io/gorm v1.23.5
 )
 
 require (
