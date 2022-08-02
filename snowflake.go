@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm/migrator"
 	"gorm.io/gorm/schema"
 
+	"github.com/sirupsen/logrus"
 	_ "github.com/snowflakedb/gosnowflake"
 )
 
@@ -127,6 +128,8 @@ func (dialector Dialector) BindVarTo(writer clause.Writer, stmt *gorm.Statement,
 func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 	re := regexp.MustCompile(`([a-zA-Z0-9|_]+)\((.+?)\)`)
 	exclRegExp := regexp.MustCompile(`excluded\.[a-zA-Z0-9|_]+`)
+
+	logrus.Infof("QuoteTo: str is %s", str)
 
 	quoteString := str
 	isFunction := re.MatchString(str)
