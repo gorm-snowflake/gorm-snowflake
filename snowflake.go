@@ -37,7 +37,7 @@ func (dialector Dialector) Name() string {
 	return SnowflakeDriverName
 }
 
-func Open(dsn string) gorm.Dialector {
+func Open(dsn string) *Dialector {
 	return &Dialector{
 		Config: &Config{
 			DSN:        dsn,
