@@ -1,10 +1,10 @@
 module github.com/EfChouTR/gorm-snowflake
 
-go 1.18
+go 1.19
 
 require (
-	github.com/snowflakedb/gosnowflake v1.6.12
-	gorm.io/gorm v1.23.8
+	github.com/snowflakedb/gosnowflake v1.6.13
+	gorm.io/gorm v1.24.0
 )
 
 require (
