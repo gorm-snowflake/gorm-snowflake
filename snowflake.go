@@ -27,9 +27,10 @@ type Dialector struct {
 }
 
 type Config struct {
-	DriverName string
-	DSN        string
-	Conn       gorm.ConnPool
+	QuoteFields bool
+	DriverName  string
+	DSN         string
+	Conn        gorm.ConnPool
 }
 
 func (dialector Dialector) Name() string {
@@ -125,40 +126,45 @@ func (dialector Dialector) BindVarTo(writer clause.Writer, stmt *gorm.Statement,
 }
 
 func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
-	re := regexp.MustCompile(`([a-zA-Z0-9|_]+)\((.+?)\)`)
-	exclRegExp := regexp.MustCompile(`excluded\.[a-zA-Z0-9|_]+`)
+	if dialector.QuoteFields {
 
-	quoteString := str
-	isFunction := re.MatchString(str)
+		re := regexp.MustCompile(`([a-zA-Z0-9|_]+)\((.+?)\)`)
+		exclRegExp := regexp.MustCompile(`excluded\.[a-zA-Z0-9|_]+`)
 
-	if isExcluded := exclRegExp.MatchString(str); isExcluded {
-		writer.WriteString(str)
-		return
-	}
+		quoteString := str
+		isFunction := re.MatchString(str)
 
-	if isFunction {
-		matches := re.FindStringSubmatch(str)
-		writer.WriteString(matches[1])
-		writer.WriteByte('(')
-		quoteString = matches[2]
-	}
+		if isExcluded := exclRegExp.MatchString(str); isExcluded {
+			writer.WriteString(str)
+			return
+		}
 
-	writer.WriteByte('"')
-	if strings.Contains(quoteString, ".") {
-		for idx, splitStr := range strings.Split(quoteString, ".") {
-			if idx > 0 {
-				writer.WriteString(`."`)
+		if isFunction {
+			matches := re.FindStringSubmatch(str)
+			writer.WriteString(matches[1])
+			writer.WriteByte('(')
+			quoteString = matches[2]
+		}
+
+		writer.WriteByte('"')
+		if strings.Contains(quoteString, ".") {
+			for idx, splitStr := range strings.Split(quoteString, ".") {
+				if idx > 0 {
+					writer.WriteString(`."`)
+				}
+				writer.WriteString(splitStr)
+				writer.WriteByte('"')
 			}
-			writer.WriteString(splitStr)
+		} else {
+			writer.WriteString(quoteString)
 			writer.WriteByte('"')
 		}
-	} else {
-		writer.WriteString(quoteString)
-		writer.WriteByte('"')
-	}
 
-	if isFunction {
-		writer.WriteByte(')')
+		if isFunction {
+			writer.WriteByte(')')
+		}
+	} else {
+		writer.WriteString(strings.ToLower(str))
 	}
 }
 
