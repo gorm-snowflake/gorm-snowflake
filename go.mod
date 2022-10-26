@@ -3,7 +3,7 @@ module github.com/EfChouTR/gorm-snowflake
 go 1.19
 
 require (
-	github.com/snowflakedb/gosnowflake v1.6.13
+	github.com/snowflakedb/gosnowflake v1.6.12
 	gorm.io/gorm v1.23.8
 )
 
