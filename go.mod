@@ -1,4 +1,4 @@
-module github.com/EfChouTR/gorm-snowflake
+module github.com/ChronosMasterOfAllTime/gorm-snowflake
 
 go 1.19
 
