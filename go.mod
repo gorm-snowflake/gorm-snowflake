@@ -1,6 +1,6 @@
 module github.com/ChronosMasterOfAllTime/gorm-snowflake
 
-go 1.19
+go 1.22
 
 require (
 	github.com/snowflakedb/gosnowflake v1.9.0
