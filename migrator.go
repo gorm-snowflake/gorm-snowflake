@@ -317,7 +317,7 @@ func (m Migrator) DropConstraint(value interface{}, name string) error {
 }
 
 // GuessConstraintAndTable no change
-func (m Migrator) GuessConstraintAndTable(stmt *gorm.Statement, name string) (_ *schema.Constraint, _ *schema.Check, table string) {
+func (m Migrator) GuessConstraintAndTable(stmt *gorm.Statement, name string) (_ *schema.Constraint, _ *schema.CheckConstraint, table string) {
 	if stmt.Schema == nil {
 		return nil, nil, stmt.Table
 	}
