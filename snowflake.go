@@ -195,7 +195,7 @@ func (dialector Dialector) DataTypeOf(field *schema.Field) string {
 		return "FLOAT"
 	case schema.String:
 		size := field.Size
-		if field.TagSettings["JSON"] != "" {
+		if _, ok := field.TagSettings["JSON"]; ok {
 			return "VARIANT"
 		}
 
