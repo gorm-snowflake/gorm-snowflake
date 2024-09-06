@@ -59,18 +59,20 @@ func Create(db *gorm.DB) {
 						}
 						db.Statement.WriteQuoted(column)
 					}
-					db.Statement.WriteByte(')')
 
-					db.Statement.WriteString(" VALUES ")
+					db.Statement.WriteString(") SELECT ")
 
 					for idx, value := range values.Values {
 						if idx > 0 {
 							db.Statement.WriteByte(',')
 						}
 
-						db.Statement.WriteByte('(')
-						db.Statement.AddVar(db.Statement, value...)
-						db.Statement.WriteByte(')')
+						for i, v := range value {
+							if i > 0 {
+								db.Statement.WriteByte(',')
+							}
+							db.Statement.AddVar(db.Statement, v)
+						}
 					}
 
 					db.Statement.WriteString(";")
