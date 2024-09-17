@@ -64,7 +64,7 @@ func Create(db *gorm.DB) {
 
 					for idx, value := range values.Values {
 						if idx > 0 {
-							db.Statement.WriteByte(',')
+							db.Statement.WriteString(", UNION SELECT ")
 						}
 
 						for i, v := range value {
