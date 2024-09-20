@@ -1,4 +1,4 @@
-module github.com/ChronosMasterOfAllTime/gorm-snowflake
+module github.com/gorm-snowflake/gorm-snowflake
 
 go 1.22
 
