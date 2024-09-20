@@ -57,3 +57,6 @@ require (
 	golang.org/x/tools v0.14.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 )
+
+// Uncomment this line if you want to target snowflake go driver from your local machine. Don't commit this when uncommented.
+// replace github.com/snowflakedb/gosnowflake => ../gosnowflake
