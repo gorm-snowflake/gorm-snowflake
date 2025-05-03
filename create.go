@@ -118,7 +118,7 @@ func Create(db *gorm.DB) {
 				db.Statement.WriteQuoted(field.DBName)
 			}
 			db.Statement.WriteString(" FROM ")
-			db.Statement.WriteQuoted(db.Statement.Table)
+			db.Statement.WriteQuoted(sch.Table)
 			db.Statement.WriteString(" CHANGES(INFORMATION => APPEND_ONLY) BEFORE(statement=>LAST_QUERY_ID());")
 			rows, err := db.Statement.ConnPool.QueryContext(db.Statement.Context, db.Statement.SQL.String(), db.Statement.Vars...)
 			reflectIndex := 0
