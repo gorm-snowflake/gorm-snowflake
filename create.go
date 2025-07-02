@@ -185,7 +185,7 @@ func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values
 		db.Statement.WriteByte(')')
 	}
 
-	db.Statement.WriteString(") AS excluded (")
+	db.Statement.WriteString(") AS EXCLUDED (")
 	for idx, column := range values.Columns {
 		if idx > 0 {
 			db.Statement.WriteByte(',')
@@ -196,7 +196,7 @@ func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values
 
 	var where []string
 	for _, field := range db.Statement.Schema.PrimaryFields {
-		where = append(where, fmt.Sprintf(`"%s"."%s" = excluded.%s`, db.Statement.Table, field.DBName, field.DBName))
+		where = append(where, fmt.Sprintf(`"%s"."%s" = EXCLUDED.%s`, db.Statement.Table, field.DBName, field.DBName))
 	}
 
 	db.Statement.WriteString(strings.Join(where, " AND "))
@@ -228,7 +228,7 @@ func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values
 				db.Statement.WriteByte(',')
 			}
 			written = true
-			db.Statement.WriteString(fmt.Sprintf("excluded.%s", column.Name))
+			db.Statement.WriteString(fmt.Sprintf("EXCLUDED.%s", column.Name))
 		}
 	}
 
