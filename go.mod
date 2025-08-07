@@ -1,4 +1,4 @@
-module github.com/virtuslabs/gorm-snowflake
+module github.com/gorm-snowflake/gorm-snowflake
 
 go 1.23.0
 
