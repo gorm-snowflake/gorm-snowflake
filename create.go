@@ -27,14 +27,15 @@ func Create(db *gorm.DB) {
 
 		if hasConflict {
 			if len(db.Statement.Schema.PrimaryFields) > 0 {
-				columnsMap := map[string]bool{}
+				columnsMap := make(map[string]bool, len(values.Columns))
 				for _, column := range values.Columns {
 					columnsMap[column.Name] = true
 				}
 
 				for _, field := range db.Statement.Schema.PrimaryFields {
-					if _, ok := columnsMap[field.DBName]; !ok {
+					if !columnsMap[field.DBName] {
 						hasConflict = false
+						break
 					}
 				}
 			} else {
@@ -45,42 +46,8 @@ func Create(db *gorm.DB) {
 		if hasConflict {
 			MergeCreate(db, onConflict, values)
 		} else {
-			db.Statement.AddClauseIfNotExists(clause.Insert{})
-			db.Statement.Build("INSERT")
-			db.Statement.WriteByte(' ')
-			db.Statement.AddClause(values)
-
-			if values, ok := db.Statement.Clauses["VALUES"].Expression.(clause.Values); ok {
-				if len(values.Columns) > 0 {
-					db.Statement.WriteByte('(')
-					for idx, column := range values.Columns {
-						if idx > 0 {
-							db.Statement.WriteByte(',')
-						}
-						db.Statement.WriteQuoted(column)
-					}
-
-					db.Statement.WriteString(") SELECT ")
-
-					for idx, value := range values.Values {
-						if idx > 0 {
-							db.Statement.WriteString(", UNION SELECT ")
-						}
-
-						for i, v := range value {
-							if i > 0 {
-								db.Statement.WriteByte(',')
-							}
-							db.Statement.AddVar(db.Statement, v)
-						}
-					}
-
-					db.Statement.WriteString(";")
-				} else {
-					// only one autoincrement column
-					db.Statement.WriteString("VALUES (DEFAULT);")
-				}
-			}
+			// Use optimized insert generation
+			buildOptimizedInsert(db, values)
 		}
 	}
 
@@ -98,73 +65,216 @@ func Create(db *gorm.DB) {
 
 		// do another select on last inserted values to populate default values (e.g. ID)
 		// this relies on the result of SELECT * FROM CHANGES to align with the order of the VALUES in MERGE statement
-		if sch := db.Statement.Schema; sch != nil && len(db.Statement.Schema.FieldsWithDefaultDBValue) > 0 {
-			var (
-				fields = make([]*schema.Field, len(sch.FieldsWithDefaultDBValue))
-				values = make([]interface{}, len(sch.FieldsWithDefaultDBValue))
-			)
+		if sch := db.Statement.Schema; sch != nil && len(sch.FieldsWithDefaultDBValue) > 0 {
+			populateDefaultValues(db, sch)
+		}
+	}
+}
 
-			db.Statement.SQL.Reset()
+// buildOptimizedInsert creates an optimized INSERT statement with UNION SELECT for Snowflake
+func buildOptimizedInsert(db *gorm.DB, values clause.Values) {
+	db.Statement.AddClauseIfNotExists(clause.Insert{})
+	db.Statement.Build("INSERT")
+	db.Statement.WriteByte(' ')
+	db.Statement.AddClause(values)
 
-			// write select
-			db.Statement.WriteString("SELECT ")
-			// populate fields
-			for idx, field := range sch.FieldsWithDefaultDBValue {
-				if idx > 0 {
-					db.Statement.WriteByte(',')
-				}
+	if values, ok := db.Statement.Clauses["VALUES"].Expression.(clause.Values); ok {
+		columnCount := len(values.Columns)
 
-				fields[idx] = field
-				db.Statement.WriteQuoted(field.DBName)
+		if columnCount == 0 {
+			db.Statement.WriteString("VALUES (DEFAULT);")
+			return
+		}
+
+		if len(values.Values) == 1 {
+			buildSingleRowInsert(db, values)
+		} else {
+			buildInsert(db, values)
+		}
+	}
+}
+
+// buildSingleRowInsert optimizes the common case of inserting a single row
+func buildSingleRowInsert(db *gorm.DB, values clause.Values) {
+	columnCount := len(values.Columns)
+	estimatedSize := (columnCount * 15) + 50 // columns + basic structure
+
+	var builder strings.Builder
+	builder.Grow(estimatedSize)
+
+	builder.WriteByte('(')
+	for idx, column := range values.Columns {
+		if idx > 0 {
+			builder.WriteByte(',')
+		}
+		builder.WriteString(db.Statement.Quote(column.Name))
+	}
+	builder.WriteString(") SELECT ")
+
+	// Single row of values
+	row := values.Values[0]
+	for i, v := range row {
+		if i > 0 {
+			builder.WriteByte(',')
+		}
+		builder.WriteByte('?')
+		db.Statement.AddVar(db.Statement, v)
+	}
+
+	builder.WriteByte(';')
+	db.Statement.WriteString(builder.String())
+}
+
+// buildInsert builds a single INSERT statement with UNION SELECT
+func buildInsert(db *gorm.DB, values clause.Values) {
+	// Pre-allocate string builder with more accurate capacity estimation
+	columnCount := len(values.Columns)
+	valueCount := len(values.Values)
+
+	avgColumnNameLen := 10
+	estimatedSize := (columnCount * (avgColumnNameLen + 3)) + // quoted column names
+		(valueCount * 13) + // " UNION SELECT " per row
+		(valueCount * columnCount * 2) + // "?," per value
+		50 // base structure
+
+	var builder strings.Builder
+	builder.Grow(estimatedSize)
+
+	// Build column list once - avoid repeated Quote() calls by caching
+	builder.WriteByte('(')
+	for idx, column := range values.Columns {
+		if idx > 0 {
+			builder.WriteByte(',')
+		}
+		// Cache quoted column name to avoid repeated quoting
+		builder.WriteString(db.Statement.Quote(column.Name))
+	}
+	builder.WriteString(") SELECT ")
+
+	// Optimize UNION SELECT generation - minimize string operations
+	const unionSelect = " UNION SELECT "
+	for idx, value := range values.Values {
+		if idx > 0 {
+			builder.WriteString(unionSelect)
+		}
+		// Pre-calculate the exact number of placeholders needed
+		valueLen := len(value)
+		for i := 0; i < valueLen; i++ {
+			if i > 0 {
+				builder.WriteByte(',')
 			}
-			db.Statement.WriteString(" FROM ")
-			db.Statement.WriteQuoted(sch.Table)
-			db.Statement.WriteString(" CHANGES(INFORMATION => APPEND_ONLY) BEFORE(statement=>LAST_QUERY_ID());")
-			rows, err := db.Statement.ConnPool.QueryContext(db.Statement.Context, db.Statement.SQL.String(), db.Statement.Vars...)
-			reflectIndex := 0
-			if err == nil {
-				defer rows.Close()
+			builder.WriteByte('?')
+			db.Statement.AddVar(db.Statement, value[i])
+		}
+	}
 
-				switch db.Statement.ReflectValue.Kind() {
-				case reflect.Slice, reflect.Array:
-					// the strategy here is to match the returned rows with INSERT only values
-					for rows.Next() {
-					BEGIN:
-						reflectValue := db.Statement.ReflectValue.Index(reflectIndex)
-						if reflect.Indirect(reflectValue).Kind() != reflect.Struct {
-							break
-						}
+	builder.WriteByte(';')
+	db.Statement.WriteString(builder.String())
+}
 
-						for idx, field := range fields {
-							fieldValue := field.ReflectValueOf(db.Statement.Context, reflectValue)
+// populateDefaultValues efficiently populates default values using CHANGES table
+func populateDefaultValues(db *gorm.DB, sch *schema.Schema) {
+	fieldsWithDefaults := sch.FieldsWithDefaultDBValue
+	fieldCount := len(fieldsWithDefaults)
 
-							// skip where default are zeros (non-insert in MERGE)
-							if !fieldValue.IsZero() {
-								reflectIndex++
+	// Early return if no fields to populate
+	if fieldCount == 0 {
+		return
+	}
 
-								if reflectIndex >= db.Statement.ReflectValue.Len() {
-									return
-								}
+	// Pre-allocate slices with exact capacity
+	fields := make([]*schema.Field, fieldCount)
+	values := make([]interface{}, fieldCount)
 
-								goto BEGIN
-							}
-							values[idx] = fieldValue.Addr().Interface()
-						}
+	db.Statement.SQL.Reset()
 
-						if err := rows.Scan(values...); err != nil {
-							_ = db.AddError(err)
-						}
-					}
-				case reflect.Struct:
-					for idx, field := range fields {
-						values[idx] = field.ReflectValueOf(db.Statement.Context, db.Statement.ReflectValue).Addr().Interface()
-					}
+	// Build SELECT query using string builder with precise capacity
+	// SELECT + field names + FROM + table + CHANGES clause
+	estimatedQuerySize := 7 + (fieldCount * 20) + 6 + 30 + 80
+	var builder strings.Builder
+	builder.Grow(estimatedQuerySize)
 
-					if rows.Next() {
-						db.AddError(rows.Scan(values...))
+	builder.WriteString("SELECT ")
+
+	// Cache quoted field names to avoid repeated Quote() calls
+	quotedTable := db.Statement.Quote(sch.Table)
+	for idx, field := range fieldsWithDefaults {
+		if idx > 0 {
+			builder.WriteByte(',')
+		}
+		fields[idx] = field
+		builder.WriteString(db.Statement.Quote(field.DBName))
+	}
+
+	builder.WriteString(" FROM ")
+	builder.WriteString(quotedTable)
+	builder.WriteString(" CHANGES(INFORMATION => APPEND_ONLY) BEFORE(statement=>LAST_QUERY_ID());")
+
+	db.Statement.WriteString(builder.String())
+
+	rows, err := db.Statement.ConnPool.QueryContext(db.Statement.Context, db.Statement.SQL.String(), db.Statement.Vars...)
+	if err != nil {
+		db.AddError(err)
+		return
+	}
+	defer rows.Close()
+
+	reflectValue := db.Statement.ReflectValue
+	reflectKind := reflectValue.Kind()
+
+	switch reflectKind {
+	case reflect.Slice, reflect.Array:
+		// Optimized slice/array processing with bounds checking
+		maxLen := reflectValue.Len()
+		reflectIndex := 0
+
+		for rows.Next() && reflectIndex < maxLen {
+			// Find the next valid struct for insertion
+			for reflectIndex < maxLen {
+				currentValue := reflectValue.Index(reflectIndex)
+				if reflect.Indirect(currentValue).Kind() != reflect.Struct {
+					break
+				}
+
+				// Check if this row has zero defaults (indicates INSERT operation)
+				hasNonZeroDefaults := false
+				for _, field := range fields {
+					fieldValue := field.ReflectValueOf(db.Statement.Context, currentValue)
+					if !fieldValue.IsZero() {
+						hasNonZeroDefaults = true
+						break
 					}
 				}
-			} else {
+
+				if hasNonZeroDefaults {
+					// Skip this row, move to next record
+					reflectIndex++
+					continue
+				}
+
+				// Found a valid INSERT row - populate interface slice for scanning
+				for idx, field := range fields {
+					fieldValue := field.ReflectValueOf(db.Statement.Context, currentValue)
+					values[idx] = fieldValue.Addr().Interface()
+				}
+
+				if err := rows.Scan(values...); err != nil {
+					db.AddError(err)
+				}
+				reflectIndex++
+				break
+			}
+		}
+
+	case reflect.Struct:
+		// Single struct case - most efficient path
+		for idx, field := range fields {
+			fieldValue := field.ReflectValueOf(db.Statement.Context, reflectValue)
+			values[idx] = fieldValue.Addr().Interface()
+		}
+
+		if rows.Next() {
+			if err := rows.Scan(values...); err != nil {
 				db.AddError(err)
 			}
 		}
@@ -172,66 +282,98 @@ func Create(db *gorm.DB) {
 }
 
 func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values) {
-	db.Statement.WriteString("MERGE INTO ")
-	db.Statement.WriteQuoted(db.Statement.Table)
-	db.Statement.WriteString(" USING (VALUES")
+	buildSingleMerge(db, onConflict, values)
+}
+
+// buildSingleMerge creates a single MERGE statement
+func buildSingleMerge(db *gorm.DB, onConflict clause.OnConflict, values clause.Values) {
+	// More accurate capacity estimation for MERGE statements
+	columnCount := len(values.Columns)
+	valueCount := len(values.Values)
+	primaryFieldCount := len(db.Statement.Schema.PrimaryFields)
+
+	estimatedSize := 100 + 30 +
+		(columnCount * 60) + // column names used multiple times
+		(valueCount * columnCount * 2) + // placeholders
+		(primaryFieldCount * 50) // WHERE conditions
+
+	var builder strings.Builder
+	builder.Grow(estimatedSize)
+
+	tableName := db.Statement.Quote(db.Statement.Table)
+	builder.WriteString("MERGE INTO ")
+	builder.WriteString(tableName)
+	builder.WriteString(" USING (VALUES")
+
+	// Optimize VALUES generation
 	for idx, value := range values.Values {
 		if idx > 0 {
-			db.Statement.WriteByte(',')
+			builder.WriteByte(',')
 		}
-
-		db.Statement.WriteByte('(')
-		db.Statement.AddVar(db.Statement, value...)
-		db.Statement.WriteByte(')')
+		builder.WriteByte('(')
+		valueLen := len(value)
+		for i := 0; i < valueLen; i++ {
+			if i > 0 {
+				builder.WriteByte(',')
+			}
+			builder.WriteByte('?')
+			db.Statement.AddVar(db.Statement, value[i])
+		}
+		builder.WriteByte(')')
 	}
 
-	db.Statement.WriteString(") AS EXCLUDED (")
+	builder.WriteString(") AS EXCLUDED (")
+	// Cache column names to avoid repeated processing
 	for idx, column := range values.Columns {
 		if idx > 0 {
-			db.Statement.WriteByte(',')
+			builder.WriteByte(',')
 		}
-		db.Statement.WriteString(column.Name)
+		builder.WriteString(column.Name)
 	}
-	db.Statement.WriteString(") ON ")
+	builder.WriteString(") ON ")
 
-	var where []string
-	for _, field := range db.Statement.Schema.PrimaryFields {
-		where = append(where, fmt.Sprintf(`"%s"."%s" = EXCLUDED.%s`, db.Statement.Table, field.DBName, field.DBName))
+	// Pre-allocate and build WHERE conditions efficiently
+	if primaryFieldCount > 0 {
+		where := make([]string, primaryFieldCount)
+		for i, field := range db.Statement.Schema.PrimaryFields {
+			// Use string concatenation instead of fmt.Sprintf for better performance
+			where[i] = `"` + db.Statement.Table + `"."` + field.DBName + `" = EXCLUDED.` + field.DBName
+		}
+		builder.WriteString(strings.Join(where, " AND "))
 	}
-
-	db.Statement.WriteString(strings.Join(where, " AND "))
 
 	if len(onConflict.DoUpdates) > 0 {
-		db.Statement.WriteString(" WHEN MATCHED THEN UPDATE SET ")
+		builder.WriteString(" WHEN MATCHED THEN UPDATE SET ")
+		// Flush builder before letting DoUpdates write directly to statement
+		db.Statement.WriteString(builder.String())
+		builder.Reset()
 		onConflict.DoUpdates.Build(db.Statement)
 	}
 
-	db.Statement.WriteString(" WHEN NOT MATCHED THEN INSERT (")
+	builder.WriteString(" WHEN NOT MATCHED THEN INSERT (")
 
-	written := false
+	// Optimize column filtering for INSERT clause
+	var insertColumns []string
+	autoIncrementField := db.Statement.Schema.PrioritizedPrimaryField
 	for _, column := range values.Columns {
-		if db.Statement.Schema.PrioritizedPrimaryField == nil || !db.Statement.Schema.PrioritizedPrimaryField.AutoIncrement || db.Statement.Schema.PrioritizedPrimaryField.DBName != column.Name {
-			if written {
-				db.Statement.WriteByte(',')
-			}
-			written = true
-			db.Statement.WriteQuoted(column.Name)
+		// Skip auto-increment columns
+		if autoIncrementField == nil || !autoIncrementField.AutoIncrement || autoIncrementField.DBName != column.Name {
+			insertColumns = append(insertColumns, db.Statement.Quote(column.Name))
 		}
 	}
+	builder.WriteString(strings.Join(insertColumns, ","))
 
-	db.Statement.WriteString(") VALUES (")
+	builder.WriteString(") VALUES (")
 
-	written = false
+	// Build VALUES clause for excluded columns
+	var excludedValues []string
 	for _, column := range values.Columns {
-		if db.Statement.Schema.PrioritizedPrimaryField == nil || !db.Statement.Schema.PrioritizedPrimaryField.AutoIncrement || db.Statement.Schema.PrioritizedPrimaryField.DBName != column.Name {
-			if written {
-				db.Statement.WriteByte(',')
-			}
-			written = true
-			db.Statement.WriteString(fmt.Sprintf("EXCLUDED.%s", column.Name))
+		if autoIncrementField == nil || !autoIncrementField.AutoIncrement || autoIncrementField.DBName != column.Name {
+			excludedValues = append(excludedValues, "EXCLUDED."+column.Name)
 		}
 	}
+	builder.WriteString(strings.Join(excludedValues, ","))
 
-	db.Statement.WriteString(")")
-	db.Statement.WriteString(";")
+	builder.WriteString(");")
+	db.Statement.WriteString(builder.String())
 }
