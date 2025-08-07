@@ -3,7 +3,6 @@ package snowflake
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -22,6 +21,12 @@ const (
 	SnowflakeDriverName = "snowflake"
 )
 
+var (
+	// Pre-compiled regex patterns for better performance
+	functionRegex = regexp.MustCompile(`([a-zA-Z0-9|_]+)\((.+?)\)`)
+	excludedRegex = regexp.MustCompile(`excluded\.[a-zA-Z0-9|_]+`)
+)
+
 type Dialector struct {
 	*Config
 }
@@ -31,6 +36,10 @@ type Config struct {
 	DriverName  string
 	DSN         string
 	Conn        gorm.ConnPool
+	// Connection pooling configuration for better performance
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime int // in seconds
 }
 
 func (dialector Dialector) Name() string {
@@ -51,7 +60,6 @@ func New(config Config) gorm.Dialector {
 }
 
 func (dialector Dialector) Initialize(db *gorm.DB) (err error) {
-	log.Println("creating connection...")
 	// register callbacks
 	callbacks.RegisterDefaultCallbacks(db, &callbacks.Config{})
 	_ = db.Callback().Create().Replace("gorm:create", Create)
@@ -127,20 +135,16 @@ func (dialector Dialector) BindVarTo(writer clause.Writer, stmt *gorm.Statement,
 
 func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 	if dialector.QuoteFields {
-
-		re := regexp.MustCompile(`([a-zA-Z0-9|_]+)\((.+?)\)`)
-		exclRegExp := regexp.MustCompile(`excluded\.[a-zA-Z0-9|_]+`)
-
 		quoteString := str
-		isFunction := re.MatchString(str)
+		isFunction := functionRegex.MatchString(str)
 
-		if isExcluded := exclRegExp.MatchString(str); isExcluded {
+		if isExcluded := excludedRegex.MatchString(str); isExcluded {
 			writer.WriteString(str)
 			return
 		}
 
 		if isFunction {
-			matches := re.FindStringSubmatch(str)
+			matches := functionRegex.FindStringSubmatch(str)
 			writer.WriteString(matches[1])
 			writer.WriteByte('(')
 			quoteString = matches[2]
@@ -148,7 +152,8 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 
 		writer.WriteByte('"')
 		if strings.Contains(quoteString, ".") {
-			for idx, splitStr := range strings.Split(quoteString, ".") {
+			parts := strings.Split(quoteString, ".")
+			for idx, splitStr := range parts {
 				if idx > 0 {
 					writer.WriteString(`."`)
 				}

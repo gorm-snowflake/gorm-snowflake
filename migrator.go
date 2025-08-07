@@ -150,9 +150,10 @@ func (m Migrator) HasTable(value interface{}) bool {
 	var count int64
 	m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		currentDatabase := m.DB.Migrator().CurrentDatabase()
+		upperTable := strings.ToUpper(stmt.Table) // Pre-compute uppercase conversion
 		return m.DB.Raw(
 			"SELECT count(*) FROM INFORMATION_SCHEMA.TABLES WHERE table_name = ? AND table_catalog = ?",
-			strings.ToUpper(stmt.Table), currentDatabase,
+			upperTable, currentDatabase,
 		).Row().Scan(&count)
 	})
 	return count > 0
@@ -210,9 +211,13 @@ func (m Migrator) HasColumn(value interface{}, field string) bool {
 			name = field.DBName
 		}
 
+		// Pre-compute uppercase conversions for better performance
+		upperTable := strings.ToUpper(stmt.Table)
+		upperName := strings.ToUpper(name)
+
 		return m.DB.Raw(
 			"SELECT count(*) FROM INFORMATION_SCHEMA.columns WHERE table_catalog = ? AND table_name = ? AND column_name = ?",
-			currentDatabase, strings.ToUpper(stmt.Table), strings.ToUpper(name),
+			currentDatabase, upperTable, upperName,
 		).Row().Scan(&count)
 	})
 
@@ -271,9 +276,13 @@ func (m Migrator) DropIndex(value interface{}, name string) error {
 func (m Migrator) HasConstraint(value interface{}, name string) bool {
 	var count int64
 	m.RunWithValue(value, func(stmt *gorm.Statement) error {
+		// Pre-compute uppercase conversions for better performance
+		upperName := strings.ToUpper(name)
+		upperTable := strings.ToUpper(stmt.Table)
+
 		return m.DB.Raw(
 			`SELECT count(*) FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE CONSTRAINT_NAME = ?  AND TABLE_NAME = ? AND TABLE_CATALOG = ?;`,
-			strings.ToUpper(name), strings.ToUpper(stmt.Table), m.CurrentDatabase(),
+			upperName, upperTable, m.CurrentDatabase(),
 		).Row().Scan(&count)
 	})
 	return count > 0
