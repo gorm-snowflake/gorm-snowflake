@@ -24,7 +24,7 @@ const (
 var (
 	// Pre-compiled regex patterns for better performance
 	functionRegex = regexp.MustCompile(`([a-zA-Z0-9|_]+)\((.+?)\)`)
-	excludedRegex = regexp.MustCompile(`excluded\.[a-zA-Z0-9|_]+`)
+	excludedRegex = regexp.MustCompile(`(?i)excluded\.[a-zA-Z0-9|_]+`) // (?i) makes it case insensitive
 )
 
 type Dialector struct {
