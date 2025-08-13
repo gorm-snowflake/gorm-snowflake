@@ -40,6 +40,10 @@ type Config struct {
 	MaxOpenConns    int
 	MaxIdleConns    int
 	ConnMaxLifetime int // in seconds
+	// UseUnionSelect enables UNION SELECT syntax for INSERT statements
+	// Required for using SQL functions in values, but slower than VALUES syntax
+	// Default: true (maintains backward compatibility)
+	UseUnionSelect bool
 }
 
 func (dialector Dialector) Name() string {
@@ -49,8 +53,9 @@ func (dialector Dialector) Name() string {
 func Open(dsn string) *Dialector {
 	return &Dialector{
 		Config: &Config{
-			DSN:        dsn,
-			DriverName: SnowflakeDriverName,
+			DSN:            dsn,
+			DriverName:     SnowflakeDriverName,
+			UseUnionSelect: true, // Default to UNION SELECT for backward compatibility
 		},
 	}
 }
