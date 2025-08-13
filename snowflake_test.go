@@ -285,6 +285,121 @@ func TestBatchInsert(t *testing.T) {
 	})
 }
 
+func TestBatchInsertMethods(t *testing.T) {
+	t.Run("VALUES Syntax for Performance", func(t *testing.T) {
+		// Setup GORM DB with VALUES syntax (UseUnionSelect: false)
+		db := setupMockDBWithConfig(t, false)
+
+		// Create test data
+		models := []TestModel{
+			{Name: "John", Age: 25},
+			{Name: "Jane", Age: 30},
+			{Name: "Bob", Age: 35},
+		}
+
+		// Parse the model schema first to get the proper schema
+		tempStmt := db.Session(&gorm.Session{DryRun: true}).Model(&TestModel{})
+		if err := tempStmt.Statement.Parse(&TestModel{}); err != nil {
+			t.Fatalf("Failed to parse model: %v", err)
+		}
+
+		// Now set up the values for create
+		tempStmt.Statement.Dest = models
+		tempStmt.Statement.ReflectValue = reflect.ValueOf(models)
+
+		// Reset SQL to ensure we're starting fresh
+		tempStmt.Statement.SQL.Reset()
+		tempStmt.Statement.Vars = nil
+
+		// Call our Create function directly
+		Create(tempStmt)
+
+		// Verify the generated SQL uses VALUES syntax
+		sql := tempStmt.Statement.SQL.String()
+
+		// Assert the complete SQL structure
+		expectedSQL := "INSERT INTO test_models (name,age) VALUES (?,?),(?,?),(?,?);"
+		if sql != expectedSQL {
+			t.Errorf("Expected exact SQL:\n%s\nGot:\n%s", expectedSQL, sql)
+		}
+
+		// Verify it does NOT contain UNION SELECT
+		if strings.Contains(sql, "UNION SELECT") {
+			t.Errorf("VALUES syntax should not contain 'UNION SELECT', got: %s", sql)
+		}
+
+		// Verify variables are correct
+		expectedVars := []interface{}{"John", 25, "Jane", 30, "Bob", 35}
+		if len(tempStmt.Statement.Vars) != len(expectedVars) {
+			t.Errorf("Expected %d variables, got %d", len(expectedVars), len(tempStmt.Statement.Vars))
+		}
+		for i, expected := range expectedVars {
+			if i < len(tempStmt.Statement.Vars) && tempStmt.Statement.Vars[i] != expected {
+				t.Errorf("Variable %d: expected %v, got %v", i, expected, tempStmt.Statement.Vars[i])
+			}
+		}
+
+		t.Logf("Generated SQL (VALUES): %s", sql)
+		t.Logf("Variables: %v", tempStmt.Statement.Vars)
+	})
+
+	t.Run("UNION SELECT Syntax for Function Support", func(t *testing.T) {
+		// Setup GORM DB with UNION SELECT syntax (UseUnionSelect: true)
+		db := setupMockDBWithConfig(t, true)
+
+		// Create test data
+		models := []TestModel{
+			{Name: "John", Age: 25},
+			{Name: "Jane", Age: 30},
+		}
+
+		// Parse the model schema first to get the proper schema
+		tempStmt := db.Session(&gorm.Session{DryRun: true}).Model(&TestModel{})
+		if err := tempStmt.Statement.Parse(&TestModel{}); err != nil {
+			t.Fatalf("Failed to parse model: %v", err)
+		}
+
+		// Now set up the values for create
+		tempStmt.Statement.Dest = models
+		tempStmt.Statement.ReflectValue = reflect.ValueOf(models)
+
+		// Reset SQL to ensure we're starting fresh
+		tempStmt.Statement.SQL.Reset()
+		tempStmt.Statement.Vars = nil
+
+		// Call our Create function directly
+		Create(tempStmt)
+
+		// Verify the generated SQL uses UNION SELECT syntax
+		sql := tempStmt.Statement.SQL.String()
+
+		// Assert the complete SQL structure
+		expectedSQL := "INSERT INTO test_models (name,age) SELECT ?,? UNION SELECT ?,?;"
+		if sql != expectedSQL {
+			t.Errorf("Expected exact SQL:\n%s\nGot:\n%s", expectedSQL, sql)
+		}
+
+		// Verify it contains UNION SELECT
+		if !strings.Contains(sql, "UNION SELECT") {
+			t.Errorf("UNION SELECT syntax should contain 'UNION SELECT', got: %s", sql)
+		}
+
+		// Verify variables are correct
+		expectedVars := []interface{}{"John", 25, "Jane", 30}
+		if len(tempStmt.Statement.Vars) != len(expectedVars) {
+			t.Errorf("Expected %d variables, got %d", len(expectedVars), len(tempStmt.Statement.Vars))
+		}
+		for i, expected := range expectedVars {
+			if i < len(tempStmt.Statement.Vars) && tempStmt.Statement.Vars[i] != expected {
+				t.Errorf("Variable %d: expected %v, got %v", i, expected, tempStmt.Statement.Vars[i])
+			}
+		}
+
+		t.Logf("Generated SQL (UNION SELECT): %s", sql)
+		t.Logf("Variables: %v", tempStmt.Statement.Vars)
+	})
+}
+
 func TestBatchInsertWithConflict(t *testing.T) {
 	t.Run("Merge Create with Conflict", func(t *testing.T) {
 		db := setupMockDB(t)
@@ -344,12 +459,17 @@ func TestBatchInsertWithConflict(t *testing.T) {
 }
 
 func setupMockDB(t *testing.T) *gorm.DB {
+	return setupMockDBWithConfig(t, true) // Default to UNION SELECT for backward compatibility
+}
+
+func setupMockDBWithConfig(t *testing.T, useUnionSelect bool) *gorm.DB {
 	// Create a dialector with a mock connection
 	mockPool := &mockConnPool{}
 	dialector := &Dialector{
 		Config: &Config{
-			Conn:       mockPool,
-			DriverName: "snowflake",
+			Conn:           mockPool,
+			DriverName:     "snowflake",
+			UseUnionSelect: useUnionSelect,
 		},
 	}
 

@@ -56,42 +56,14 @@ func Create(db *gorm.DB) {
 			if values, ok := db.Statement.Clauses["VALUES"].Expression.(clause.Values); ok {
 				columnCount := len(values.Columns)
 				if columnCount > 0 {
-					valueCount := len(values.Values)
+					// Determine insertion method based on configuration
+					useUnionSelect := shouldUseUnionSelect(db)
 
-					// Pre-allocate statement builder capacity for better performance
-					estimatedSize := (columnCount * 20) + // column names with quotes
-						(valueCount * 15) + // " UNION SELECT " strings
-						(valueCount * columnCount * 2) + // placeholders
-						50 // base structure
-					db.Statement.SQL.Grow(estimatedSize)
-
-					db.Statement.WriteByte('(')
-					for idx, column := range values.Columns {
-						if idx > 0 {
-							db.Statement.WriteByte(',')
-						}
-						db.Statement.WriteQuoted(column)
+					if useUnionSelect {
+						buildUnionSelectInsert(db, values)
+					} else {
+						buildValuesInsert(db, values)
 					}
-
-					db.Statement.WriteString(") SELECT ")
-
-					// Cache the union string to avoid repeated allocations
-					const unionSelect = " UNION SELECT "
-					for idx, value := range values.Values {
-						if idx > 0 {
-							db.Statement.WriteString(unionSelect)
-						}
-
-						valueLen := len(value)
-						for i := 0; i < valueLen; i++ {
-							if i > 0 {
-								db.Statement.WriteByte(',')
-							}
-							db.Statement.AddVar(db.Statement, value[i])
-						}
-					}
-
-					db.Statement.WriteString(";")
 				} else {
 					// only one autoincrement column
 					db.Statement.WriteString("VALUES (DEFAULT);")
@@ -287,5 +259,114 @@ func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values
 	}
 
 	db.Statement.WriteString(")")
+	db.Statement.WriteString(";")
+}
+
+// shouldUseUnionSelect determines whether to use UNION SELECT or VALUES syntax
+func shouldUseUnionSelect(db *gorm.DB) bool {
+	// Try to get the config from the dialector
+	if d, ok := db.Dialector.(*Dialector); ok && d.Config != nil {
+		// If explicitly set to false, use VALUES syntax
+		// If not set or true, use UNION SELECT (maintains backward compatibility)
+		return d.Config.UseUnionSelect != false
+	}
+	// Default to UNION SELECT for backward compatibility
+	return true
+}
+
+// buildUnionSelectInsert builds INSERT statement using UNION SELECT syntax
+// This supports SQL functions in values but is slower than VALUES syntax
+func buildUnionSelectInsert(db *gorm.DB, values clause.Values) {
+	columnCount := len(values.Columns)
+	valueCount := len(values.Values)
+
+	// Pre-allocate variables slice with exact capacity for better performance
+	totalVars := valueCount * columnCount
+	if cap(db.Statement.Vars) < len(db.Statement.Vars)+totalVars {
+		// Grow the vars slice if needed
+		newVars := make([]interface{}, len(db.Statement.Vars), len(db.Statement.Vars)+totalVars)
+		copy(newVars, db.Statement.Vars)
+		db.Statement.Vars = newVars
+	}
+
+	// Pre-allocate statement builder capacity for better performance
+	estimatedSize := (columnCount * 20) + // column names with quotes
+		(valueCount * 15) + // " UNION SELECT " strings
+		(valueCount * columnCount * 2) + // placeholders
+		50 // base structure
+	db.Statement.SQL.Grow(estimatedSize)
+
+	db.Statement.WriteByte('(')
+	for idx, column := range values.Columns {
+		if idx > 0 {
+			db.Statement.WriteByte(',')
+		}
+		db.Statement.WriteQuoted(column)
+	}
+
+	db.Statement.WriteString(") SELECT ")
+
+	// Cache the union string to avoid repeated allocations
+	const unionSelect = " UNION SELECT "
+	for idx, value := range values.Values {
+		if idx > 0 {
+			db.Statement.WriteString(unionSelect)
+		}
+
+		valueLen := len(value)
+		for i := 0; i < valueLen; i++ {
+			if i > 0 {
+				db.Statement.WriteByte(',')
+			}
+			db.Statement.AddVar(db.Statement, value[i])
+		}
+	}
+
+	db.Statement.WriteString(";")
+}
+
+// buildValuesInsert builds INSERT statement using traditional VALUES syntax
+// This is faster than UNION SELECT but doesn't support SQL functions in values
+func buildValuesInsert(db *gorm.DB, values clause.Values) {
+	columnCount := len(values.Columns)
+	valueCount := len(values.Values)
+
+	// Pre-allocate variables slice with exact capacity for better performance
+	totalVars := valueCount * columnCount
+	if cap(db.Statement.Vars) < len(db.Statement.Vars)+totalVars {
+		// Grow the vars slice if needed
+		newVars := make([]interface{}, len(db.Statement.Vars), len(db.Statement.Vars)+totalVars)
+		copy(newVars, db.Statement.Vars)
+		db.Statement.Vars = newVars
+	}
+
+	// Pre-allocate statement builder capacity for better performance
+	estimatedSize := (columnCount * 15) + // column names with quotes
+		(valueCount * 10) + // "(),(),()," patterns
+		(valueCount * columnCount * 2) + // placeholders
+		50 // base structure
+	db.Statement.SQL.Grow(estimatedSize)
+
+	db.Statement.WriteByte('(')
+	for idx, column := range values.Columns {
+		if idx > 0 {
+			db.Statement.WriteByte(',')
+		}
+		db.Statement.WriteQuoted(column)
+	}
+	db.Statement.WriteByte(')')
+
+	db.Statement.WriteString(" VALUES ")
+
+	for idx, value := range values.Values {
+		if idx > 0 {
+			db.Statement.WriteByte(',')
+		}
+
+		db.Statement.WriteByte('(')
+		db.Statement.AddVar(db.Statement, value...)
+		db.Statement.WriteByte(')')
+	}
+
 	db.Statement.WriteString(";")
 }
