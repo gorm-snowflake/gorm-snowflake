@@ -143,7 +143,13 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 		quoteString := str
 		isFunction := functionRegex.MatchString(str)
 
+		// Check if this is EXCLUDED table reference (used in MERGE statements)
+		// This handles both "EXCLUDED.column" and just "EXCLUDED" table name
 		if isExcluded := excludedRegex.MatchString(str); isExcluded {
+			writer.WriteString(str)
+			return
+		}
+		if strings.ToUpper(str) == "EXCLUDED" {
 			writer.WriteString(str)
 			return
 		}

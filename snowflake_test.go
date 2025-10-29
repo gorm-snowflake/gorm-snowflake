@@ -176,7 +176,7 @@ func TestBatchInsert(t *testing.T) {
 		sql := tempStmt.Statement.SQL.String()
 
 		// Assert the complete SQL structure
-		expectedSQL := "INSERT INTO test_models (name,age) SELECT ?,? UNION SELECT ?,? UNION SELECT ?,?;"
+		expectedSQL := "INSERT INTO \"test_models\" (\"name\",\"age\") SELECT ?,? UNION SELECT ?,? UNION SELECT ?,?;"
 		if sql != expectedSQL {
 			t.Errorf("Expected exact SQL:\n%s\nGot:\n%s", expectedSQL, sql)
 		}
@@ -222,7 +222,7 @@ func TestBatchInsert(t *testing.T) {
 		sql := tempStmt.Statement.SQL.String()
 
 		// Assert the complete SQL structure
-		expectedSQL := "INSERT INTO test_models (name,age) SELECT ?,?;"
+		expectedSQL := "INSERT INTO \"test_models\" (\"name\",\"age\") SELECT ?,?;"
 		if sql != expectedSQL {
 			t.Errorf("Expected exact SQL:\n%s\nGot:\n%s", expectedSQL, sql)
 		}
@@ -271,7 +271,7 @@ func TestBatchInsert(t *testing.T) {
 		sql := tempStmt.Statement.SQL.String()
 
 		// Assert the complete SQL structure
-		expectedSQL := "INSERT INTO auto_increment_onlies VALUES (DEFAULT);"
+		expectedSQL := "INSERT INTO \"auto_increment_onlies\" VALUES (DEFAULT);"
 		if sql != expectedSQL {
 			t.Errorf("Expected exact SQL:\n%s\nGot:\n%s", expectedSQL, sql)
 		}
@@ -318,7 +318,7 @@ func TestBatchInsertMethods(t *testing.T) {
 		sql := tempStmt.Statement.SQL.String()
 
 		// Assert the complete SQL structure
-		expectedSQL := "INSERT INTO test_models (name,age) VALUES (?,?),(?,?),(?,?);"
+		expectedSQL := "INSERT INTO \"test_models\" (\"name\",\"age\") VALUES (?,?),(?,?),(?,?);"
 		if sql != expectedSQL {
 			t.Errorf("Expected exact SQL:\n%s\nGot:\n%s", expectedSQL, sql)
 		}
@@ -374,7 +374,7 @@ func TestBatchInsertMethods(t *testing.T) {
 		sql := tempStmt.Statement.SQL.String()
 
 		// Assert the complete SQL structure
-		expectedSQL := "INSERT INTO test_models (name,age) SELECT ?,? UNION SELECT ?,?;"
+		expectedSQL := "INSERT INTO \"test_models\" (\"name\",\"age\") SELECT ?,? UNION SELECT ?,?;"
 		if sql != expectedSQL {
 			t.Errorf("Expected exact SQL:\n%s\nGot:\n%s", expectedSQL, sql)
 		}
@@ -438,7 +438,7 @@ func TestBatchInsertWithConflict(t *testing.T) {
 
 		// Assert the complete SQL structure (the exact format may vary slightly)
 		// We'll check key components and overall structure
-		expectedSQLPattern := "MERGE INTO test_models USING (VALUES(?,?,?),(?,?,?)) AS EXCLUDED (name,age,id) ON \"test_models\".\"id\" = EXCLUDED.id WHEN MATCHED THEN UPDATE SET age=age WHEN NOT MATCHED THEN INSERT (name,age) VALUES (EXCLUDED.name,EXCLUDED.age);"
+		expectedSQLPattern := "MERGE INTO \"test_models\" USING (VALUES(?,?,?),(?,?,?)) AS EXCLUDED (\"name\",\"age\",\"id\") ON \"test_models\".\"id\" = EXCLUDED.\"id\" WHEN MATCHED THEN UPDATE SET \"age\"=EXCLUDED.\"age\" WHEN NOT MATCHED THEN INSERT (\"name\",\"age\") VALUES (EXCLUDED.\"name\",EXCLUDED.\"age\");"
 		if sql != expectedSQLPattern {
 			t.Errorf("Expected exact SQL:\n%s\nGot:\n%s", expectedSQLPattern, sql)
 		}
@@ -456,6 +456,77 @@ func TestBatchInsertWithConflict(t *testing.T) {
 
 		t.Logf("Merge SQL: %s", sql)
 	})
+
+	t.Run("Merge Create without Quoting", func(t *testing.T) {
+		// Setup DB without quoting enabled
+		mockPool := &mockConnPool{}
+		dialector := &Dialector{
+			Config: &Config{
+				Conn:           mockPool,
+				DriverName:     "snowflake",
+				UseUnionSelect: true,
+				QuoteFields:    false, // Disable quoting
+			},
+		}
+
+		db, err := gorm.Open(dialector, &gorm.Config{
+			Logger: logger.Default.LogMode(logger.Silent),
+		})
+		if err != nil {
+			t.Fatalf("Failed to setup mock DB: %v", err)
+		}
+
+		// Create test data with IDs for conflict detection
+		models := []TestModel{
+			{ID: 1, Name: "John", Age: 25},
+			{ID: 2, Name: "Jane", Age: 30},
+		}
+
+		// Parse the model schema first to get the proper schema
+		tempStmt := db.Session(&gorm.Session{DryRun: true}).Model(&TestModel{})
+		if err := tempStmt.Statement.Parse(&TestModel{}); err != nil {
+			t.Fatalf("Failed to parse model: %v", err)
+		}
+
+		// Add OnConflict clause
+		tempStmt.Statement.AddClause(clause.OnConflict{
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"age": clause.Column{Name: "age"},
+			}),
+		})
+
+		// Now set up the values for create
+		tempStmt.Statement.Dest = models
+		tempStmt.Statement.ReflectValue = reflect.ValueOf(models)
+
+		// Reset SQL to ensure we're starting fresh
+		tempStmt.Statement.SQL.Reset()
+		tempStmt.Statement.Vars = nil
+
+		// Call our Create function directly
+		Create(tempStmt)
+
+		sql := tempStmt.Statement.SQL.String()
+
+		// When QuoteFields is false, identifiers should be unquoted (Snowflake will uppercase them)
+		expectedSQLPattern := "MERGE INTO test_models USING (VALUES(?,?,?),(?,?,?)) AS EXCLUDED (name,age,id) ON test_models.id = EXCLUDED.id WHEN MATCHED THEN UPDATE SET age=EXCLUDED.age WHEN NOT MATCHED THEN INSERT (name,age) VALUES (EXCLUDED.name,EXCLUDED.age);"
+		if sql != expectedSQLPattern {
+			t.Errorf("Expected exact SQL:\n%s\nGot:\n%s", expectedSQLPattern, sql)
+		}
+
+		// Verify variables are correct (name, age, id for each row)
+		expectedVars := []interface{}{"John", 25, uint(1), "Jane", 30, uint(2)}
+		if len(tempStmt.Statement.Vars) != len(expectedVars) {
+			t.Errorf("Expected %d variables, got %d", len(expectedVars), len(tempStmt.Statement.Vars))
+		}
+		for i, expected := range expectedVars {
+			if i < len(tempStmt.Statement.Vars) && tempStmt.Statement.Vars[i] != expected {
+				t.Errorf("Variable %d: expected %v, got %v", i, expected, tempStmt.Statement.Vars[i])
+			}
+		}
+
+		t.Logf("Merge SQL (no quotes): %s", sql)
+	})
 }
 
 func setupMockDB(t *testing.T) *gorm.DB {
@@ -470,6 +541,7 @@ func setupMockDBWithConfig(t *testing.T, useUnionSelect bool) *gorm.DB {
 			Conn:           mockPool,
 			DriverName:     "snowflake",
 			UseUnionSelect: useUnionSelect,
+			QuoteFields:    true, // Enable quoting for realistic testing
 		},
 	}
 
