@@ -3,6 +3,7 @@ package snowflake
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
@@ -296,13 +297,35 @@ func prepareOnConflictForMerge(db *gorm.DB, onConflict clause.OnConflict) clause
 		// We use clause.Expr because GORM's QuoteTo is called separately for
 		// table and column parts, making it impossible to keep both unquoted
 		if col, ok := assignment.Value.(clause.Column); ok {
+			colName := col.Name
+
+			// Check if user already provided "excluded.column" (case-insensitive)
+			colNameLower := strings.ToLower(colName)
+			if strings.HasPrefix(colNameLower, "excluded.") {
+				// User provided excluded.column - transform to proper case
+				// Extract the column name after "excluded."
+				columnPart := colName[len("excluded."):]
+
+				if shouldQuote {
+					transformed[i].Value = clause.Expr{
+						SQL: fmt.Sprintf(`EXCLUDED."%s"`, columnPart),
+					}
+				} else {
+					transformed[i].Value = clause.Expr{
+						SQL: fmt.Sprintf(`EXCLUDED.%s`, columnPart),
+					}
+				}
+				continue
+			}
+
+			// Normal case: simple column name, wrap with EXCLUDED prefix
 			if shouldQuote {
 				transformed[i].Value = clause.Expr{
-					SQL: fmt.Sprintf(`EXCLUDED."%s"`, col.Name),
+					SQL: fmt.Sprintf(`EXCLUDED."%s"`, colName),
 				}
 			} else {
 				transformed[i].Value = clause.Expr{
-					SQL: fmt.Sprintf(`EXCLUDED.%s`, col.Name),
+					SQL: fmt.Sprintf(`EXCLUDED.%s`, colName),
 				}
 			}
 		}
@@ -319,7 +342,7 @@ func shouldUseUnionSelect(db *gorm.DB) bool {
 	if d, ok := db.Dialector.(*Dialector); ok && d.Config != nil {
 		// If explicitly set to false, use VALUES syntax
 		// If not set or true, use UNION SELECT (maintains backward compatibility)
-		return d.Config.UseUnionSelect != false
+		return d.Config.UseUnionSelect
 	}
 	// Default to UNION SELECT for backward compatibility
 	return true

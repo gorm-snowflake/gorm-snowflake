@@ -24,7 +24,6 @@ const (
 var (
 	// Pre-compiled regex patterns for better performance
 	functionRegex = regexp.MustCompile(`([a-zA-Z0-9|_]+)\((.+?)\)`)
-	excludedRegex = regexp.MustCompile(`(?i)excluded\.[a-zA-Z0-9|_]+`) // (?i) makes it case insensitive
 )
 
 type Dialector struct {
@@ -142,17 +141,6 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 	if dialector.QuoteFields {
 		quoteString := str
 		isFunction := functionRegex.MatchString(str)
-
-		// Check if this is EXCLUDED table reference (used in MERGE statements)
-		// This handles both "EXCLUDED.column" and just "EXCLUDED" table name
-		if isExcluded := excludedRegex.MatchString(str); isExcluded {
-			writer.WriteString(str)
-			return
-		}
-		if strings.ToUpper(str) == "EXCLUDED" {
-			writer.WriteString(str)
-			return
-		}
 
 		if isFunction {
 			matches := functionRegex.FindStringSubmatch(str)
