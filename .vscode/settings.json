@@ -1,0 +1,5 @@
+{
+  "go.gopath": "${env:HOME}/go/1.23.6",
+  "go.goroot": "${env:HOME}/.goenv/versions/1.23.6",
+  "go.toolsGopath": "${env:HOME}/go/tools"
+}

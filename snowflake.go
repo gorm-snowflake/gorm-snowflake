@@ -24,7 +24,6 @@ const (
 var (
 	// Pre-compiled regex patterns for better performance
 	functionRegex = regexp.MustCompile(`([a-zA-Z0-9|_]+)\((.+?)\)`)
-	excludedRegex = regexp.MustCompile(`(?i)excluded\.[a-zA-Z0-9|_]+`) // (?i) makes it case insensitive
 )
 
 type Dialector struct {
@@ -142,11 +141,6 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 	if dialector.QuoteFields {
 		quoteString := str
 		isFunction := functionRegex.MatchString(str)
-
-		if isExcluded := excludedRegex.MatchString(str); isExcluded {
-			writer.WriteString(str)
-			return
-		}
 
 		if isFunction {
 			matches := functionRegex.FindStringSubmatch(str)

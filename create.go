@@ -184,6 +184,10 @@ func Create(db *gorm.DB) {
 }
 
 func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values) {
+	// Transform any column references in DoUpdates to EXCLUDED.column format upfront
+	// This prevents GORM from incorrectly quoting "excluded" as a table reference
+	onConflict = prepareOnConflictForMerge(db, onConflict)
+
 	valueCount := len(values.Values)
 	columnCount := len(values.Columns)
 	primaryFieldCount := len(db.Statement.Schema.PrimaryFields)
@@ -214,16 +218,21 @@ func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values
 		if idx > 0 {
 			db.Statement.WriteByte(',')
 		}
-		db.Statement.WriteString(column.Name)
+		db.Statement.WriteQuoted(column.Name)
 	}
 	db.Statement.WriteString(") ON ")
 
-	// Pre-allocate WHERE slice for better performance
-	where := make([]string, primaryFieldCount)
+	// Build ON clause with proper quoting based on QuoteFields setting
 	for i, field := range db.Statement.Schema.PrimaryFields {
-		where[i] = fmt.Sprintf(`"%s"."%s" = EXCLUDED.%s`, db.Statement.Table, field.DBName, field.DBName)
+		if i > 0 {
+			db.Statement.WriteString(" AND ")
+		}
+		db.Statement.WriteQuoted(db.Statement.Table)
+		db.Statement.WriteByte('.')
+		db.Statement.WriteQuoted(field.DBName)
+		db.Statement.WriteString(" = EXCLUDED.")
+		db.Statement.WriteQuoted(field.DBName)
 	}
-	db.Statement.WriteString(strings.Join(where, " AND "))
 
 	if len(onConflict.DoUpdates) > 0 {
 		db.Statement.WriteString(" WHEN MATCHED THEN UPDATE SET ")
@@ -254,12 +263,77 @@ func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values
 				db.Statement.WriteByte(',')
 			}
 			written = true
-			db.Statement.WriteString(fmt.Sprintf("EXCLUDED.%s", column.Name))
+			// Write EXCLUDED.<column> - use QuoteTo to handle quoting consistently
+			db.Statement.WriteString("EXCLUDED.")
+			db.Statement.WriteQuoted(column.Name)
 		}
 	}
 
 	db.Statement.WriteString(")")
 	db.Statement.WriteString(";")
+}
+
+// prepareOnConflictForMerge prepares the OnConflict clause for use in MERGE statements
+// It converts column references to raw SQL expressions to prevent incorrect quoting
+// GORM doesn't support unquoted table-qualified columns, so we use clause.Expr
+func prepareOnConflictForMerge(db *gorm.DB, onConflict clause.OnConflict) clause.OnConflict {
+	if len(onConflict.DoUpdates) == 0 {
+		return onConflict
+	}
+
+	// Check if we should quote fields
+	shouldQuote := false
+	if dialector, ok := db.Dialector.(*Dialector); ok && dialector.Config != nil {
+		shouldQuote = dialector.Config.QuoteFields
+	}
+
+	// Create a new Set with converted assignments
+	transformed := make(clause.Set, len(onConflict.DoUpdates))
+
+	for i, assignment := range onConflict.DoUpdates {
+		transformed[i] = assignment
+
+		// Convert clause.Column references to EXCLUDED.column format
+		// We use clause.Expr because GORM's QuoteTo is called separately for
+		// table and column parts, making it impossible to keep both unquoted
+		if col, ok := assignment.Value.(clause.Column); ok {
+			colName := col.Name
+
+			// Check if user already provided "excluded.column" (case-insensitive)
+			colNameLower := strings.ToLower(colName)
+			if strings.HasPrefix(colNameLower, "excluded.") {
+				// User provided excluded.column - transform to proper case
+				// Extract the column name after "excluded."
+				columnPart := colName[len("excluded."):]
+
+				if shouldQuote {
+					transformed[i].Value = clause.Expr{
+						SQL: fmt.Sprintf(`EXCLUDED."%s"`, columnPart),
+					}
+				} else {
+					transformed[i].Value = clause.Expr{
+						SQL: fmt.Sprintf(`EXCLUDED.%s`, columnPart),
+					}
+				}
+				continue
+			}
+
+			// Normal case: simple column name, wrap with EXCLUDED prefix
+			if shouldQuote {
+				transformed[i].Value = clause.Expr{
+					SQL: fmt.Sprintf(`EXCLUDED."%s"`, colName),
+				}
+			} else {
+				transformed[i].Value = clause.Expr{
+					SQL: fmt.Sprintf(`EXCLUDED.%s`, colName),
+				}
+			}
+		}
+	}
+
+	// Return a new OnConflict with the converted DoUpdates
+	onConflict.DoUpdates = transformed
+	return onConflict
 }
 
 // shouldUseUnionSelect determines whether to use UNION SELECT or VALUES syntax
@@ -268,7 +342,7 @@ func shouldUseUnionSelect(db *gorm.DB) bool {
 	if d, ok := db.Dialector.(*Dialector); ok && d.Config != nil {
 		// If explicitly set to false, use VALUES syntax
 		// If not set or true, use UNION SELECT (maintains backward compatibility)
-		return d.Config.UseUnionSelect != false
+		return d.Config.UseUnionSelect
 	}
 	// Default to UNION SELECT for backward compatibility
 	return true
