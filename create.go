@@ -268,7 +268,7 @@ func shouldUseUnionSelect(db *gorm.DB) bool {
 	if d, ok := db.Dialector.(*Dialector); ok && d.Config != nil {
 		// If explicitly set to false, use VALUES syntax
 		// If not set or true, use UNION SELECT (maintains backward compatibility)
-		return d.Config.UseUnionSelect != false
+		return d.Config.UseUnionSelect
 	}
 	// Default to UNION SELECT for backward compatibility
 	return true

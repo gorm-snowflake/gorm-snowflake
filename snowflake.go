@@ -143,7 +143,22 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 		quoteString := str
 		isFunction := functionRegex.MatchString(str)
 
+		// Check if this is an EXCLUDED pseudo-table reference
 		if isExcluded := excludedRegex.MatchString(str); isExcluded {
+			// For EXCLUDED references, we need to handle them specially
+			// The format should be EXCLUDED."column_name" not "excluded"."column_name"
+			if strings.Contains(str, ".") {
+				parts := strings.Split(str, ".")
+				if len(parts) == 2 && strings.ToUpper(parts[0]) == "EXCLUDED" {
+					// Write EXCLUDED (unquoted) followed by quoted column name
+					writer.WriteString("EXCLUDED.")
+					writer.WriteByte('"')
+					writer.WriteString(parts[1])
+					writer.WriteByte('"')
+					return
+				}
+			}
+			// Fallback: write as-is if the format is unexpected
 			writer.WriteString(str)
 			return
 		}
