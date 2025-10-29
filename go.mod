@@ -6,7 +6,7 @@ toolchain go1.23.6
 
 require (
 	github.com/snowflakedb/gosnowflake v1.17.0
-	gorm.io/gorm v1.25.12
+	gorm.io/gorm v1.31.0
 )
 
 require (
