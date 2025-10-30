@@ -123,7 +123,7 @@ func (dialector Dialector) ClauseBuilders() map[string]clause.ClauseBuilder {
 }
 
 func (dialector Dialector) DefaultValueOf(field *schema.Field) clause.Expression {
-	return clause.Expr{SQL: "NULL"}
+	return clause.Expr{SQL: "NULL", Vars: []interface{}{}}
 }
 
 func (dialector Dialector) Migrator(db *gorm.DB) gorm.Migrator {

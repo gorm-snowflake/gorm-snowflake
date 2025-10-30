@@ -75,8 +75,14 @@ func Create(db *gorm.DB) {
 	if !db.DryRun && db.Error == nil {
 		db.RowsAffected = 0
 
+		// Ensure Vars is not nil before spreading to prevent reflection errors in driver
+		vars := db.Statement.Vars
+		if vars == nil {
+			vars = []interface{}{}
+		}
+
 		// exec the merge/insert first
-		if result, err := db.Statement.ConnPool.ExecContext(db.Statement.Context, db.Statement.SQL.String(), db.Statement.Vars...); err == nil {
+		if result, err := db.Statement.ConnPool.ExecContext(db.Statement.Context, db.Statement.SQL.String(), vars...); err == nil {
 			db.RowsAffected, _ = result.RowsAffected()
 		} else {
 			_ = db.AddError(err)
@@ -308,11 +314,13 @@ func prepareOnConflictForMerge(db *gorm.DB, onConflict clause.OnConflict) clause
 
 				if shouldQuote {
 					transformed[i].Value = clause.Expr{
-						SQL: fmt.Sprintf(`EXCLUDED."%s"`, columnPart),
+						SQL:  fmt.Sprintf(`EXCLUDED."%s"`, columnPart),
+						Vars: []interface{}{},
 					}
 				} else {
 					transformed[i].Value = clause.Expr{
-						SQL: fmt.Sprintf(`EXCLUDED.%s`, columnPart),
+						SQL:  fmt.Sprintf(`EXCLUDED.%s`, columnPart),
+						Vars: []interface{}{},
 					}
 				}
 				continue
@@ -321,11 +329,13 @@ func prepareOnConflictForMerge(db *gorm.DB, onConflict clause.OnConflict) clause
 			// Normal case: simple column name, wrap with EXCLUDED prefix
 			if shouldQuote {
 				transformed[i].Value = clause.Expr{
-					SQL: fmt.Sprintf(`EXCLUDED."%s"`, colName),
+					SQL:  fmt.Sprintf(`EXCLUDED."%s"`, colName),
+					Vars: []interface{}{},
 				}
 			} else {
 				transformed[i].Value = clause.Expr{
-					SQL: fmt.Sprintf(`EXCLUDED.%s`, colName),
+					SQL:  fmt.Sprintf(`EXCLUDED.%s`, colName),
+					Vars: []interface{}{},
 				}
 			}
 		}

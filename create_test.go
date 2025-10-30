@@ -1,6 +1,8 @@
 package snowflake
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"reflect"
 	"strings"
@@ -1042,6 +1044,335 @@ func TestGORMSaveExcludedQuotingBug(t *testing.T) {
 			}
 		})
 	})
+}
+
+func TestPrepareOnConflictForMergeImmutability(t *testing.T) {
+	t.Run("prepareOnConflictForMerge does not mutate input", func(t *testing.T) {
+		db := setupMockDBWithConfig(t, true, true)
+
+		// Create original OnConflict
+		original := clause.OnConflict{
+			Columns: []clause.Column{{Name: "id"}},
+			DoUpdates: []clause.Assignment{
+				{
+					Column: clause.Column{Name: "name"},
+					Value:  clause.Column{Name: "col1"},
+				},
+				{
+					Column: clause.Column{Name: "email"},
+					Value:  clause.Column{Name: "col2"},
+				},
+			},
+			UpdateAll: false,
+		}
+
+		// Store original DoUpdates for comparison
+		originalDoUpdatesLen := len(original.DoUpdates)
+
+		// Call prepareOnConflictForMerge
+		transformed := prepareOnConflictForMerge(db, original)
+
+		// Verify original was NOT mutated
+		if len(original.DoUpdates) != originalDoUpdatesLen {
+			t.Errorf("Original DoUpdates length changed: got %d, want %d", len(original.DoUpdates), originalDoUpdatesLen)
+		}
+
+		// Verify original value is still a Column, not an Expr (check the actual struct, not saved value)
+		if _, ok := original.DoUpdates[0].Value.(clause.Column); !ok {
+			t.Errorf("Original value type changed from Column to %T - input was mutated!", original.DoUpdates[0].Value)
+		}
+
+		// Verify transformed has Expr values
+		if _, ok := transformed.DoUpdates[0].Value.(clause.Expr); !ok {
+			t.Errorf("Transformed value should be Expr, got %T", transformed.DoUpdates[0].Value)
+		}
+
+		// Verify they are different slice objects
+		origPtr := fmt.Sprintf("%p", original.DoUpdates)
+		transPtr := fmt.Sprintf("%p", transformed.DoUpdates)
+		if origPtr == transPtr {
+			t.Error("Original and transformed DoUpdates are pointing to same slice - not immutable!")
+		}
+		t.Logf("Original DoUpdates pointer: %s, Transformed: %s", origPtr, transPtr)
+
+		t.Log("✓ prepareOnConflictForMerge properly creates new struct without mutating input")
+	})
+
+	t.Run("multiple calls with same input produce consistent results", func(t *testing.T) {
+		db := setupMockDBWithConfig(t, true, true)
+
+		original := clause.OnConflict{
+			Columns: []clause.Column{{Name: "id"}},
+			DoUpdates: []clause.Assignment{
+				{
+					Column: clause.Column{Name: "name"},
+					Value:  clause.Column{Name: "excluded.NAME"},
+				},
+			},
+		}
+
+		// Call multiple times with same input
+		result1 := prepareOnConflictForMerge(db, original)
+		result2 := prepareOnConflictForMerge(db, original)
+
+		// Both should produce same SQL
+		expr1, ok1 := result1.DoUpdates[0].Value.(clause.Expr)
+		expr2, ok2 := result2.DoUpdates[0].Value.(clause.Expr)
+
+		if !ok1 || !ok2 {
+			t.Fatal("Results should be Expr type")
+		}
+
+		if expr1.SQL != expr2.SQL {
+			t.Errorf("Multiple calls produced different results: %q vs %q", expr1.SQL, expr2.SQL)
+		}
+
+		// Original should still be unchanged
+		if _, ok := original.DoUpdates[0].Value.(clause.Column); !ok {
+			t.Error("Original was mutated - value is no longer a Column")
+		}
+
+		t.Log("✓ Multiple calls produce consistent results without side effects")
+	})
+
+	t.Run("preserves all OnConflict fields", func(t *testing.T) {
+		db := setupMockDBWithConfig(t, true, true)
+
+		original := clause.OnConflict{
+			Columns:      []clause.Column{{Name: "id"}, {Name: "tenant"}},
+			OnConstraint: "unique_constraint",
+			DoNothing:    false,
+			UpdateAll:    true,
+			DoUpdates: []clause.Assignment{
+				{
+					Column: clause.Column{Name: "name"},
+					Value:  clause.Column{Name: "col1"},
+				},
+			},
+		}
+
+		transformed := prepareOnConflictForMerge(db, original)
+
+		// Verify all fields were copied
+		if len(transformed.Columns) != len(original.Columns) {
+			t.Errorf("Columns not copied: got %d, want %d", len(transformed.Columns), len(original.Columns))
+		}
+
+		if transformed.OnConstraint != original.OnConstraint {
+			t.Errorf("OnConstraint not copied: got %q, want %q", transformed.OnConstraint, original.OnConstraint)
+		}
+
+		if transformed.DoNothing != original.DoNothing {
+			t.Errorf("DoNothing not copied: got %v, want %v", transformed.DoNothing, original.DoNothing)
+		}
+
+		if transformed.UpdateAll != original.UpdateAll {
+			t.Errorf("UpdateAll not copied: got %v, want %v", transformed.UpdateAll, original.UpdateAll)
+		}
+
+		t.Log("✓ All OnConflict fields properly preserved in copy")
+	})
+}
+
+// TestCreateWithNilVars tests that Create handles nil db.Statement.Vars gracefully
+// This replicates the production issue where nil Vars caused a reflection panic in Snowflake driver
+func TestCreateWithNilVars(t *testing.T) {
+	t.Run("Create with nil Vars should not panic", func(t *testing.T) {
+		db := setupMockDBWithConfig(t, true, true)
+
+		// Parse the schema
+		if err := db.Statement.Parse(&TestModel{}); err != nil {
+			t.Fatalf("Failed to parse model: %v", err)
+		}
+
+		// Create a statement with SQL but explicitly nil Vars
+		// This simulates the edge case that caused the production panic
+		stmt := db.Session(&gorm.Session{DryRun: false}).Model(&TestModel{})
+		stmt.Statement.SQL.WriteString("INSERT INTO test_models (name, age) VALUES (?, ?)")
+		stmt.Statement.Vars = nil // Explicitly set to nil to simulate the bug condition
+
+		// This should NOT panic - our fix ensures we convert nil to empty slice
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("Create panicked with nil Vars: %v", r)
+			}
+		}()
+
+		Create(stmt)
+
+		// Verify the fix worked - no panic occurred
+		t.Log("✓ Create handled nil Vars without panic")
+	})
+
+	t.Run("MergeCreate with nil Vars and EXCLUDED transformation", func(t *testing.T) {
+		db := setupMockDBWithConfig(t, true, true)
+
+		// Parse the schema
+		if err := db.Statement.Parse(&TestModel{}); err != nil {
+			t.Fatalf("Failed to parse model: %v", err)
+		}
+
+		// Create model data
+		model := TestModel{ID: 1, Name: "John", Age: 25}
+
+		// Setup for merge create with conflict
+		stmt := db.Session(&gorm.Session{DryRun: false}).Model(&TestModel{})
+		stmt.Statement.Dest = model
+		stmt.Statement.ReflectValue = reflect.ValueOf(model)
+
+		// Add ON CONFLICT clause with EXCLUDED references (the scenario that triggered the bug)
+		onConflict := clause.OnConflict{
+			Columns: []clause.Column{{Name: "id"}},
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "name"}, Value: clause.Column{Name: "excluded.name"}},
+				{Column: clause.Column{Name: "age"}, Value: clause.Column{Name: "excluded.age"}},
+			},
+		}
+		stmt.Statement.AddClause(onConflict)
+
+		// Build the MERGE statement which transforms EXCLUDED references
+		values := clause.Values{
+			Columns: []clause.Column{{Name: "name"}, {Name: "age"}, {Name: "id"}},
+			Values:  [][]interface{}{{model.Name, model.Age, model.ID}},
+		}
+		MergeCreate(stmt, onConflict, values)
+
+		// At this point, Statement.Vars should be populated from the MergeCreate
+		// But if something goes wrong and it's nil, our fix should handle it
+		originalVars := stmt.Statement.Vars
+		stmt.Statement.Vars = nil // Force nil to test the fix
+
+		// This should NOT panic
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("Create panicked with nil Vars after EXCLUDED transformation: %v", r)
+			}
+		}()
+
+		// Reset SQL for the actual execution test
+		stmt.Statement.SQL.Reset()
+		stmt.Statement.SQL.WriteString("MERGE INTO test_models USING (VALUES(?,?,?)) AS EXCLUDED (name,age,id) ON test_models.id = EXCLUDED.id WHEN MATCHED THEN UPDATE SET name=EXCLUDED.name,age=EXCLUDED.age WHEN NOT MATCHED THEN INSERT (name,age) VALUES (EXCLUDED.name,EXCLUDED.age);")
+		stmt.Statement.Vars = nil // Ensure it's nil
+
+		Create(stmt)
+
+		// Verify the fix worked
+		t.Log("✓ MergeCreate with EXCLUDED transformation handled nil Vars without panic")
+		t.Logf("✓ Original vars would have been: %v", originalVars)
+	})
+
+	t.Run("Verify empty slice is used when Vars is nil", func(t *testing.T) {
+		db := setupMockDBWithConfig(t, true, true)
+
+		// Parse the schema
+		if err := db.Statement.Parse(&TestModel{}); err != nil {
+			t.Fatalf("Failed to parse model: %v", err)
+		}
+
+		stmt := db.Session(&gorm.Session{DryRun: false}).Model(&TestModel{})
+		stmt.Statement.SQL.WriteString("SELECT 1")
+		stmt.Statement.Vars = nil
+
+		// Track what was passed to ExecContext via our mock
+		executedWithNil := false
+		originalMock := stmt.Statement.ConnPool
+
+		// Wrap the mock to verify the fix
+		stmt.Statement.ConnPool = &testConnPoolWrapper{
+			ConnPool: originalMock,
+			onExec: func(args []interface{}) {
+				// If our fix works, args should be empty slice, not nil
+				if args == nil {
+					executedWithNil = true
+					t.Error("ExecContext received nil args - fix didn't work!")
+				} else {
+					t.Logf("✓ ExecContext received non-nil args: %v (len=%d)", args, len(args))
+				}
+			},
+		}
+
+		Create(stmt)
+
+		if executedWithNil {
+			t.Error("The nil Vars fix failed - nil was passed to ExecContext")
+		} else {
+			t.Log("✓ Confirmed: nil Vars was converted to empty slice before ExecContext")
+		}
+	})
+
+	t.Run("Simulate Snowflake driver reflection panic with nil args", func(t *testing.T) {
+		db := setupMockDBWithConfig(t, true, true)
+
+		if err := db.Statement.Parse(&TestModel{}); err != nil {
+			t.Fatalf("Failed to parse model: %v", err)
+		}
+
+		stmt := db.Session(&gorm.Session{DryRun: false}).Model(&TestModel{})
+		stmt.Statement.SQL.WriteString("INSERT INTO test_models (name, age) VALUES (?, ?)")
+		stmt.Statement.Vars = nil
+
+		// Replace mock with one that simulates Snowflake driver's reflection behavior
+		stmt.Statement.ConnPool = &panicOnNilArgsConnPool{}
+
+		// With the fix active, this should NOT panic
+		// If you comment out the fix in create.go, this test will catch the panic
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("Create panicked even with fix: %v - This means the fix isn't working!", r)
+				t.Logf("Panic details: %v", r)
+			} else {
+				t.Log("✓ Fix successfully prevented panic - nil Vars converted to empty slice")
+			}
+		}()
+
+		Create(stmt)
+	})
+}
+
+// panicOnNilArgsConnPool simulates Snowflake driver's behavior when it receives nil args
+type panicOnNilArgsConnPool struct{}
+
+func (m *panicOnNilArgsConnPool) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	// Simulate what Snowflake driver does: reflect on args
+	if args == nil {
+		// This simulates the exact error from Snowflake driver
+		var nilValue reflect.Value // zero Value
+		_ = nilValue.Type()        // This will panic: "reflect: call of reflect.Value.Type on zero Value"
+	}
+	return &mockResult{rowsAffected: 1}, nil
+}
+
+func (m *panicOnNilArgsConnPool) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *panicOnNilArgsConnPool) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return nil
+}
+
+func (m *panicOnNilArgsConnPool) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *panicOnNilArgsConnPool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
+	return m, nil
+}
+
+func (m *panicOnNilArgsConnPool) Ping() error {
+	return nil
+}
+
+// testConnPoolWrapper wraps a ConnPool to intercept ExecContext calls
+type testConnPoolWrapper struct {
+	gorm.ConnPool
+	onExec func(args []interface{})
+}
+
+func (w *testConnPoolWrapper) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	if w.onExec != nil {
+		w.onExec(args)
+	}
+	return w.ConnPool.ExecContext(ctx, query, args...)
 }
 
 // clauseWriter implements clause.Writer for testing
