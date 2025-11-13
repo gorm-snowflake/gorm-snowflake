@@ -2,19 +2,19 @@ package snowflake
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/snowflakedb/gosnowflake"
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 	"gorm.io/gorm/migrator"
 	"gorm.io/gorm/schema"
-
-	_ "github.com/snowflakedb/gosnowflake"
 )
 
 const (
@@ -267,4 +267,51 @@ func (sns NamingStrategy) CheckerName(table, column string) string {
 // IndexName snowflake edition
 func (sns NamingStrategy) IndexName(table, column string) string {
 	return sns.defaultNS.IndexName(table, column)
+}
+
+// Translate implements the ErrorTranslator interface to convert Snowflake-specific
+// errors into standard GORM errors. This allows GORM's error handling to work
+// consistently across different database dialects.
+func (dialector Dialector) Translate(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	// Try to extract a SnowflakeError from the error chain
+	var sfErr *gosnowflake.SnowflakeError
+	if errors.As(err, &sfErr) {
+		// Note: Snowflake does not enforce most constraints (only NOT NULL)
+		// as documented in https://docs.snowflake.com/en/user-guide/table-considerations.html
+		// However, we still translate common error patterns when they occur
+
+		// Check for duplicate key violations
+		// Snowflake error code for duplicate key is typically indicated in the message
+		// since Snowflake doesn't strictly enforce UNIQUE constraints
+		if strings.Contains(strings.ToLower(sfErr.Message), "duplicate") ||
+			strings.Contains(strings.ToLower(sfErr.Message), "unique") {
+			return gorm.ErrDuplicatedKey
+		}
+
+		// Check for foreign key violations
+		// While Snowflake doesn't enforce FK constraints by default,
+		// if they are defined and validated, errors may mention foreign key
+		if strings.Contains(strings.ToLower(sfErr.Message), "foreign key") {
+			return gorm.ErrForeignKeyViolated
+		}
+
+		// Check for check constraint violations
+		if strings.Contains(strings.ToLower(sfErr.Message), "check constraint") {
+			return gorm.ErrCheckConstraintViolated
+		}
+
+		// Check for invalid data/value errors
+		if strings.Contains(strings.ToLower(sfErr.Message), "invalid") &&
+			(strings.Contains(strings.ToLower(sfErr.Message), "value") ||
+				strings.Contains(strings.ToLower(sfErr.Message), "data")) {
+			return gorm.ErrInvalidData
+		}
+	}
+
+	// Return the original error if no translation is needed
+	return err
 }
