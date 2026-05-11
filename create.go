@@ -191,6 +191,7 @@ func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values
 	valueCount := len(values.Values)
 	columnCount := len(values.Columns)
 	primaryFieldCount := len(db.Statement.Schema.PrimaryFields)
+	useUnionSelect := shouldUseUnionSelect(db)
 
 	// Pre-allocate statement capacity for better performance
 	estimatedSize := 100 + len(db.Statement.Table)*2 +
@@ -201,16 +202,37 @@ func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values
 
 	db.Statement.WriteString("MERGE INTO ")
 	db.Statement.WriteQuoted(db.Statement.Table)
-	db.Statement.WriteString(" USING (VALUES")
+	db.Statement.WriteString(" USING (")
 
-	for idx, value := range values.Values {
-		if idx > 0 {
-			db.Statement.WriteByte(',')
+	if useUnionSelect {
+		// Use SELECT ... UNION SELECT syntax to support SQL functions
+		for idx, value := range values.Values {
+			if idx > 0 {
+				db.Statement.WriteString(" UNION SELECT ")
+			} else {
+				db.Statement.WriteString("SELECT ")
+			}
+
+			valueLen := len(value)
+			for i := 0; i < valueLen; i++ {
+				if i > 0 {
+					db.Statement.WriteByte(',')
+				}
+				db.Statement.AddVar(db.Statement, value[i])
+			}
 		}
+	} else {
+		// Use VALUES syntax (faster but doesn't support SQL functions)
+		db.Statement.WriteString("VALUES")
+		for idx, value := range values.Values {
+			if idx > 0 {
+				db.Statement.WriteByte(',')
+			}
 
-		db.Statement.WriteByte('(')
-		db.Statement.AddVar(db.Statement, value...)
-		db.Statement.WriteByte(')')
+			db.Statement.WriteByte('(')
+			db.Statement.AddVar(db.Statement, value...)
+			db.Statement.WriteByte(')')
+		}
 	}
 
 	db.Statement.WriteString(") AS EXCLUDED (")

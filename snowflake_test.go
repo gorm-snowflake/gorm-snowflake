@@ -414,7 +414,7 @@ func TestBatchInsertWithConflict(t *testing.T) {
 
 		// Assert the complete SQL structure (the exact format may vary slightly)
 		// We'll check key components and overall structure
-		expectedSQLPattern := "MERGE INTO \"test_models\" USING (VALUES(?,?,?),(?,?,?)) AS EXCLUDED (\"name\",\"age\",\"id\") ON \"test_models\".\"id\" = EXCLUDED.\"id\" WHEN MATCHED THEN UPDATE SET \"age\"=EXCLUDED.\"age\" WHEN NOT MATCHED THEN INSERT (\"name\",\"age\") VALUES (EXCLUDED.\"name\",EXCLUDED.\"age\");"
+		expectedSQLPattern := "MERGE INTO \"test_models\" USING (SELECT ?,?,? UNION SELECT ?,?,?) AS EXCLUDED (\"name\",\"age\",\"id\") ON \"test_models\".\"id\" = EXCLUDED.\"id\" WHEN MATCHED THEN UPDATE SET \"age\"=EXCLUDED.\"age\" WHEN NOT MATCHED THEN INSERT (\"name\",\"age\") VALUES (EXCLUDED.\"name\",EXCLUDED.\"age\");"
 		if sql != expectedSQLPattern {
 			t.Errorf("Expected exact SQL:\n%s\nGot:\n%s", expectedSQLPattern, sql)
 		}
@@ -485,7 +485,7 @@ func TestBatchInsertWithConflict(t *testing.T) {
 		sql := tempStmt.Statement.SQL.String()
 
 		// When QuoteFields is false, identifiers should be unquoted (Snowflake will uppercase them)
-		expectedSQLPattern := "MERGE INTO test_models USING (VALUES(?,?,?),(?,?,?)) AS EXCLUDED (name,age,id) ON test_models.id = EXCLUDED.id WHEN MATCHED THEN UPDATE SET age=EXCLUDED.age WHEN NOT MATCHED THEN INSERT (name,age) VALUES (EXCLUDED.name,EXCLUDED.age);"
+		expectedSQLPattern := "MERGE INTO test_models USING (SELECT ?,?,? UNION SELECT ?,?,?) AS EXCLUDED (name,age,id) ON test_models.id = EXCLUDED.id WHEN MATCHED THEN UPDATE SET age=EXCLUDED.age WHEN NOT MATCHED THEN INSERT (name,age) VALUES (EXCLUDED.name,EXCLUDED.age);"
 		if sql != expectedSQLPattern {
 			t.Errorf("Expected exact SQL:\n%s\nGot:\n%s", expectedSQLPattern, sql)
 		}
