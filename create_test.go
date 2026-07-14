@@ -146,7 +146,7 @@ func TestBuildUnionSelectInsert(t *testing.T) {
 	buildUnionSelectInsert(tempStmt, values)
 
 	sql := tempStmt.Statement.SQL.String()
-	expectedSQL := `("name","age") SELECT ?,? UNION SELECT ?,?;`
+	expectedSQL := `("name","age") SELECT ?,? UNION ALL SELECT ?,?;`
 
 	if sql != expectedSQL {
 		t.Errorf("Expected SQL:\n%s\nGot:\n%s", expectedSQL, sql)

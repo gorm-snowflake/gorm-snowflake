@@ -205,10 +205,10 @@ func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values
 	db.Statement.WriteString(" USING (")
 
 	if useUnionSelect {
-		// Use SELECT ... UNION SELECT syntax to support SQL functions
+		// Use SELECT ... UNION ALL SELECT syntax to support SQL functions
 		for idx, value := range values.Values {
 			if idx > 0 {
-				db.Statement.WriteString(" UNION SELECT ")
+				db.Statement.WriteString(" UNION ALL SELECT ")
 			} else {
 				db.Statement.WriteString("SELECT ")
 			}
@@ -358,19 +358,19 @@ func prepareOnConflictForMerge(db *gorm.DB, onConflict clause.OnConflict) clause
 	return onConflict
 }
 
-// shouldUseUnionSelect determines whether to use UNION SELECT or VALUES syntax
+// shouldUseUnionSelect determines whether to use UNION ALL SELECT or VALUES syntax
 func shouldUseUnionSelect(db *gorm.DB) bool {
 	// Try to get the config from the dialector
 	if d, ok := db.Dialector.(*Dialector); ok && d.Config != nil {
-		// If explicitly set to false, use VALUES syntax
-		// If not set or true, use UNION SELECT (maintains backward compatibility)
-		return d.Config.UseUnionSelect
+		// Prefer the clearer-named InsertWithUnionSelect when set, falling back to
+		// the deprecated UseUnionSelect field for backward compatibility.
+		return d.Config.useUnionSelectForInserts()
 	}
-	// Default to UNION SELECT for backward compatibility
+	// Default to UNION ALL SELECT for backward compatibility
 	return true
 }
 
-// buildUnionSelectInsert builds INSERT statement using UNION SELECT syntax
+// buildUnionSelectInsert builds INSERT statement using UNION ALL SELECT syntax
 // This supports SQL functions in values but is slower than VALUES syntax
 func buildUnionSelectInsert(db *gorm.DB, values clause.Values) {
 	columnCount := len(values.Columns)
@@ -387,7 +387,7 @@ func buildUnionSelectInsert(db *gorm.DB, values clause.Values) {
 
 	// Pre-allocate statement builder capacity for better performance
 	estimatedSize := (columnCount * 20) + // column names with quotes
-		(valueCount * 15) + // " UNION SELECT " strings
+		(valueCount * 15) + // " UNION ALL SELECT " strings
 		(valueCount * columnCount * 2) + // placeholders
 		50 // base structure
 	db.Statement.SQL.Grow(estimatedSize)
@@ -403,7 +403,7 @@ func buildUnionSelectInsert(db *gorm.DB, values clause.Values) {
 	db.Statement.WriteString(") SELECT ")
 
 	// Cache the union string to avoid repeated allocations
-	const unionSelect = " UNION SELECT "
+	const unionSelect = " UNION ALL SELECT "
 	for idx, value := range values.Values {
 		if idx > 0 {
 			db.Statement.WriteString(unionSelect)
@@ -422,7 +422,7 @@ func buildUnionSelectInsert(db *gorm.DB, values clause.Values) {
 }
 
 // buildValuesInsert builds INSERT statement using traditional VALUES syntax
-// This is faster than UNION SELECT but doesn't support SQL functions in values
+// This is faster than UNION ALL SELECT but doesn't support SQL functions in values
 func buildValuesInsert(db *gorm.DB, values clause.Values) {
 	columnCount := len(values.Columns)
 	valueCount := len(values.Values)

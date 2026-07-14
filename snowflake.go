@@ -39,10 +39,31 @@ type Config struct {
 	MaxOpenConns    int
 	MaxIdleConns    int
 	ConnMaxLifetime int // in seconds
-	// UseUnionSelect enables UNION SELECT syntax for INSERT statements
+	// UseUnionSelect enables UNION ALL SELECT syntax for INSERT statements
 	// Required for using SQL functions in values, but slower than VALUES syntax
 	// Default: true (maintains backward compatibility)
+	//
+	// Deprecated: use InsertWithUnionSelect instead, whose name better conveys its
+	// purpose. UseUnionSelect is kept for backward compatibility and continues to
+	// work; if both fields are set, InsertWithUnionSelect takes precedence.
 	UseUnionSelect bool
+	// InsertWithUnionSelect enables UNION ALL SELECT syntax (instead of VALUES) for
+	// INSERT statements. Required when using SQL functions in insert values, but
+	// slower than the VALUES syntax. This is a clearer-named alias for
+	// UseUnionSelect. It is a pointer so "unset" can be distinguished from
+	// "explicitly false"; when nil, the value of UseUnionSelect is used instead.
+	// Default: true (maintains backward compatibility)
+	InsertWithUnionSelect *bool
+}
+
+// useUnionSelectForInserts resolves the effective UNION ALL SELECT setting,
+// preferring InsertWithUnionSelect when explicitly set and falling back to the
+// deprecated UseUnionSelect field otherwise.
+func (c *Config) useUnionSelectForInserts() bool {
+	if c.InsertWithUnionSelect != nil {
+		return *c.InsertWithUnionSelect
+	}
+	return c.UseUnionSelect
 }
 
 func (dialector Dialector) Name() string {
@@ -54,7 +75,7 @@ func Open(dsn string) *Dialector {
 		Config: &Config{
 			DSN:            dsn,
 			DriverName:     SnowflakeDriverName,
-			UseUnionSelect: true, // Default to UNION SELECT for backward compatibility
+			UseUnionSelect: true, // Default to UNION ALL SELECT for backward compatibility
 		},
 	}
 }
