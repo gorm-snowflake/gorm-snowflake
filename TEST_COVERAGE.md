@@ -27,8 +27,8 @@ Tests the main functionality of the Snowflake dialector and naming strategy.
 
 #### Batch Insert Tests
 
-- **TestBatchInsert**: Tests UNION SELECT batch insertion
-- **TestBatchInsertMethods**: Tests both VALUES and UNION SELECT methods
+- **TestBatchInsert**: Tests UNION ALL SELECT batch insertion
+- **TestBatchInsertMethods**: Tests both VALUES and UNION ALL SELECT methods
 - **TestBatchInsertWithConflict**: Tests merge operations with conflicts
 
 #### Quote Tests
@@ -59,8 +59,8 @@ Tests the CREATE functionality and SQL generation utilities.
 
 #### SQL Generation Tests
 
-- **TestShouldUseUnionSelect**: Tests logic for choosing UNION SELECT vs VALUES
-- **TestBuildUnionSelectInsert**: Tests UNION SELECT SQL generation
+- **TestShouldUseUnionSelect**: Tests logic for choosing UNION ALL SELECT vs VALUES
+- **TestBuildUnionSelectInsert**: Tests UNION ALL SELECT SQL generation
 - **TestBuildValuesInsert**: Tests VALUES SQL generation
 - **TestMergeCreateComplex**: Tests complex merge operations
 - **TestCreateWithFieldsWithDefaultDBValue**: Tests default value handling
@@ -139,7 +139,7 @@ Tests database migration functionality.
 ### 2. SQL Generation
 
 - INSERT with VALUES syntax
-- INSERT with UNION SELECT syntax
+- INSERT with UNION ALL SELECT syntax
 - MERGE operations for upserts
 - Conflict resolution
 - Default value handling

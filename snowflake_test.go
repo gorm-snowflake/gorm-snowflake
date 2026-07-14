@@ -120,7 +120,7 @@ type TestModel struct {
 }
 
 func TestBatchInsert(t *testing.T) {
-	t.Run("Batch Insert with UNION SELECT", func(t *testing.T) {
+	t.Run("Batch Insert with UNION ALL SELECT", func(t *testing.T) {
 		// Setup GORM DB with mock
 		db := setupMockDB(t)
 
@@ -152,7 +152,7 @@ func TestBatchInsert(t *testing.T) {
 		sql := tempStmt.Statement.SQL.String()
 
 		// Assert the complete SQL structure
-		expectedSQL := "INSERT INTO \"test_models\" (\"name\",\"age\") SELECT ?,? UNION SELECT ?,? UNION SELECT ?,?;"
+		expectedSQL := "INSERT INTO \"test_models\" (\"name\",\"age\") SELECT ?,? UNION ALL SELECT ?,? UNION ALL SELECT ?,?;"
 		if sql != expectedSQL {
 			t.Errorf("Expected exact SQL:\n%s\nGot:\n%s", expectedSQL, sql)
 		}
@@ -299,9 +299,9 @@ func TestBatchInsertMethods(t *testing.T) {
 			t.Errorf("Expected exact SQL:\n%s\nGot:\n%s", expectedSQL, sql)
 		}
 
-		// Verify it does NOT contain UNION SELECT
-		if strings.Contains(sql, "UNION SELECT") {
-			t.Errorf("VALUES syntax should not contain 'UNION SELECT', got: %s", sql)
+		// Verify it does NOT contain UNION ALL SELECT
+		if strings.Contains(sql, "UNION ALL SELECT") {
+			t.Errorf("VALUES syntax should not contain 'UNION ALL SELECT', got: %s", sql)
 		}
 
 		// Verify variables are correct
@@ -319,8 +319,8 @@ func TestBatchInsertMethods(t *testing.T) {
 		t.Logf("Variables: %v", tempStmt.Statement.Vars)
 	})
 
-	t.Run("UNION SELECT Syntax for Function Support", func(t *testing.T) {
-		// Setup GORM DB with UNION SELECT syntax (UseUnionSelect: true)
+	t.Run("UNION ALL SELECT Syntax for Function Support", func(t *testing.T) {
+		// Setup GORM DB with UNION ALL SELECT syntax (UseUnionSelect: true)
 		db := setupMockDBWithConfig(t, true, true)
 
 		// Create test data
@@ -346,18 +346,18 @@ func TestBatchInsertMethods(t *testing.T) {
 		// Call our Create function directly
 		Create(tempStmt)
 
-		// Verify the generated SQL uses UNION SELECT syntax
+		// Verify the generated SQL uses UNION ALL SELECT syntax
 		sql := tempStmt.Statement.SQL.String()
 
 		// Assert the complete SQL structure
-		expectedSQL := "INSERT INTO \"test_models\" (\"name\",\"age\") SELECT ?,? UNION SELECT ?,?;"
+		expectedSQL := "INSERT INTO \"test_models\" (\"name\",\"age\") SELECT ?,? UNION ALL SELECT ?,?;"
 		if sql != expectedSQL {
 			t.Errorf("Expected exact SQL:\n%s\nGot:\n%s", expectedSQL, sql)
 		}
 
-		// Verify it contains UNION SELECT
-		if !strings.Contains(sql, "UNION SELECT") {
-			t.Errorf("UNION SELECT syntax should contain 'UNION SELECT', got: %s", sql)
+		// Verify it contains UNION ALL SELECT
+		if !strings.Contains(sql, "UNION ALL SELECT") {
+			t.Errorf("UNION ALL SELECT syntax should contain 'UNION ALL SELECT', got: %s", sql)
 		}
 
 		// Verify variables are correct
@@ -371,7 +371,7 @@ func TestBatchInsertMethods(t *testing.T) {
 			}
 		}
 
-		t.Logf("Generated SQL (UNION SELECT): %s", sql)
+		t.Logf("Generated SQL (UNION ALL SELECT): %s", sql)
 		t.Logf("Variables: %v", tempStmt.Statement.Vars)
 	})
 }
@@ -414,7 +414,7 @@ func TestBatchInsertWithConflict(t *testing.T) {
 
 		// Assert the complete SQL structure (the exact format may vary slightly)
 		// We'll check key components and overall structure
-		expectedSQLPattern := "MERGE INTO \"test_models\" USING (SELECT ?,?,? UNION SELECT ?,?,?) AS EXCLUDED (\"name\",\"age\",\"id\") ON \"test_models\".\"id\" = EXCLUDED.\"id\" WHEN MATCHED THEN UPDATE SET \"age\"=EXCLUDED.\"age\" WHEN NOT MATCHED THEN INSERT (\"name\",\"age\") VALUES (EXCLUDED.\"name\",EXCLUDED.\"age\");"
+		expectedSQLPattern := "MERGE INTO \"test_models\" USING (SELECT ?,?,? UNION ALL SELECT ?,?,?) AS EXCLUDED (\"name\",\"age\",\"id\") ON \"test_models\".\"id\" = EXCLUDED.\"id\" WHEN MATCHED THEN UPDATE SET \"age\"=EXCLUDED.\"age\" WHEN NOT MATCHED THEN INSERT (\"name\",\"age\") VALUES (EXCLUDED.\"name\",EXCLUDED.\"age\");"
 		if sql != expectedSQLPattern {
 			t.Errorf("Expected exact SQL:\n%s\nGot:\n%s", expectedSQLPattern, sql)
 		}
@@ -485,7 +485,7 @@ func TestBatchInsertWithConflict(t *testing.T) {
 		sql := tempStmt.Statement.SQL.String()
 
 		// When QuoteFields is false, identifiers should be unquoted (Snowflake will uppercase them)
-		expectedSQLPattern := "MERGE INTO test_models USING (SELECT ?,?,? UNION SELECT ?,?,?) AS EXCLUDED (name,age,id) ON test_models.id = EXCLUDED.id WHEN MATCHED THEN UPDATE SET age=EXCLUDED.age WHEN NOT MATCHED THEN INSERT (name,age) VALUES (EXCLUDED.name,EXCLUDED.age);"
+		expectedSQLPattern := "MERGE INTO test_models USING (SELECT ?,?,? UNION ALL SELECT ?,?,?) AS EXCLUDED (name,age,id) ON test_models.id = EXCLUDED.id WHEN MATCHED THEN UPDATE SET age=EXCLUDED.age WHEN NOT MATCHED THEN INSERT (name,age) VALUES (EXCLUDED.name,EXCLUDED.age);"
 		if sql != expectedSQLPattern {
 			t.Errorf("Expected exact SQL:\n%s\nGot:\n%s", expectedSQLPattern, sql)
 		}
@@ -506,7 +506,7 @@ func TestBatchInsertWithConflict(t *testing.T) {
 }
 
 func setupMockDB(t *testing.T) *gorm.DB {
-	return setupMockDBWithConfig(t, true, true) // Default to UNION SELECT for backward compatibility
+	return setupMockDBWithConfig(t, true, true) // Default to UNION ALL SELECT for backward compatibility
 }
 
 func setupMockDBWithConfig(t *testing.T, useUnionSelect bool, quoteFields bool) *gorm.DB {
