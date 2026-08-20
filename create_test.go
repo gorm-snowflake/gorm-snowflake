@@ -1098,8 +1098,8 @@ func TestMergeCreateConditionalUpdate(t *testing.T) {
 
 		sql := stmt.Statement.SQL.String()
 
-		if !strings.Contains(sql, "WHEN MATCHED AND") {
-			t.Errorf("expected conditional WHEN MATCHED AND, got: %s", sql)
+		if !strings.Contains(sql, "WHEN MATCHED AND (") {
+			t.Errorf("expected conditional WHEN MATCHED AND ( with parentheses, got: %s", sql)
 		}
 		if !strings.Contains(sql, "EXCLUDED.age > test_models.age") {
 			t.Errorf("expected the Where condition in the SQL, got: %s", sql)
