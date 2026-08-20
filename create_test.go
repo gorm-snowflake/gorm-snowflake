@@ -1057,3 +1057,73 @@ func (w *clauseWriter) WriteByte(b byte) error {
 func (w *clauseWriter) WriteString(s string) (int, error) {
 	return w.Builder.WriteString(s)
 }
+
+// TestMergeCreateConditionalUpdate covers clause.OnConflict.Where, which maps to
+// Snowflake's `WHEN MATCHED AND <condition> THEN UPDATE`. Without it a caller
+// expressing a conditional upsert (e.g. "only apply if the incoming timestamp is
+// newer") silently gets an unconditional update, because the Where clause is
+// dropped rather than rejected.
+func TestMergeCreateConditionalUpdate(t *testing.T) {
+	newStmt := func(t *testing.T) *gorm.DB {
+		t.Helper()
+		db := setupMockDBWithConfig(t, true, true)
+		stmt := db.Session(&gorm.Session{DryRun: true}).Model(&TestModel{})
+		if err := stmt.Statement.Parse(&TestModel{}); err != nil {
+			t.Fatalf("Failed to parse model: %v", err)
+		}
+		stmt.Statement.SQL.Reset()
+		stmt.Statement.Vars = nil
+		return stmt
+	}
+
+	values := clause.Values{
+		Columns: []clause.Column{{Name: "name"}, {Name: "age"}, {Name: "id"}},
+		Values:  [][]interface{}{{"John", 25, uint(1)}},
+	}
+
+	doUpdates := clause.Assignments(map[string]interface{}{
+		"name": clause.Column{Name: "name"},
+		"age":  clause.Column{Name: "age"},
+	})
+
+	t.Run("emits WHEN MATCHED AND when Where is set", func(t *testing.T) {
+		stmt := newStmt(t)
+
+		MergeCreate(stmt, clause.OnConflict{
+			DoUpdates: doUpdates,
+			Where: clause.Where{Exprs: []clause.Expression{
+				clause.Expr{SQL: "EXCLUDED.age > test_models.age"},
+			}},
+		}, values)
+
+		sql := stmt.Statement.SQL.String()
+
+		if !strings.Contains(sql, "WHEN MATCHED AND") {
+			t.Errorf("expected conditional WHEN MATCHED AND, got: %s", sql)
+		}
+		if !strings.Contains(sql, "EXCLUDED.age > test_models.age") {
+			t.Errorf("expected the Where condition in the SQL, got: %s", sql)
+		}
+		if !strings.Contains(sql, "THEN UPDATE SET") {
+			t.Errorf("expected UPDATE clause, got: %s", sql)
+		}
+		if !strings.Contains(sql, "WHEN NOT MATCHED THEN INSERT") {
+			t.Errorf("expected INSERT clause, got: %s", sql)
+		}
+	})
+
+	t.Run("stays unconditional when Where is empty", func(t *testing.T) {
+		stmt := newStmt(t)
+
+		MergeCreate(stmt, clause.OnConflict{DoUpdates: doUpdates}, values)
+
+		sql := stmt.Statement.SQL.String()
+
+		if !strings.Contains(sql, "WHEN MATCHED THEN UPDATE SET") {
+			t.Errorf("expected unconditional WHEN MATCHED, got: %s", sql)
+		}
+		if strings.Contains(sql, "WHEN MATCHED AND") {
+			t.Errorf("did not expect a condition without Where, got: %s", sql)
+		}
+	})
+}
