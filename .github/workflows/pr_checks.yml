@@ -30,6 +30,16 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: "./go.mod"
+      - name: Download Go modules (retry)
+        if: steps.check-files.outputs.has_changes == 'true'
+        run: |
+          for attempt in 1 2 3; do
+            go mod download && break
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep 5
+          done
       - name: Run Unit Tests
         if: steps.check-files.outputs.has_changes == 'true'
         run: make test
