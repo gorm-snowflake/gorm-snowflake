@@ -257,7 +257,19 @@ func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values
 	}
 
 	if len(onConflict.DoUpdates) > 0 {
-		db.Statement.WriteString(" WHEN MATCHED THEN UPDATE SET ")
+		db.Statement.WriteString(" WHEN MATCHED")
+
+		// OnConflict.Where maps to Snowflake's optional MERGE update predicate:
+		// WHEN MATCHED AND <condition> THEN UPDATE. It is wrapped in parentheses
+		// so that a condition containing OR cannot bind loosely against the
+		// implicit AND and silently widen the set of updated rows.
+		if len(onConflict.Where.Exprs) > 0 {
+			db.Statement.WriteString(" AND (")
+			onConflict.Where.Build(db.Statement)
+			db.Statement.WriteByte(')')
+		}
+
+		db.Statement.WriteString(" THEN UPDATE SET ")
 		onConflict.DoUpdates.Build(db.Statement)
 	}
 
